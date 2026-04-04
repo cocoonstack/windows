@@ -1,0 +1,23 @@
+# Build artifacts
+*.qcow2
+*.qcow2.part-*
+*.raw
+*.img
+*.iso
+*.vhdx
+
+# Firmware and temp disks
+OVMF_VARS.fd
+autounattend.img
+
+# Runtime files
+*.log
+*.pid
+*.sock
+
+# Local work dirs
+dist/
+out/
+output/
+tmp/
+work/
