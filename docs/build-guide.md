@@ -231,7 +231,7 @@ The included [`autounattend.xml`](../autounattend.xml) automates the entire Wind
 
 - **User account**: local administrator `cocoon` with auto-logon (password base64-encoded in XML)
 - **OOBE**: hides EULA, online account, and wireless setup pages
-- **27 FirstLogonCommands** execute in order:
+- **26 FirstLogonCommands** execute in order:
 
 | Order | Action | Command |
 |-------|--------|---------|
@@ -246,12 +246,11 @@ The included [`autounattend.xml`](../autounattend.xml) automates the entire Wind
 | 13    | **Network profile** | Set to Private (required for WinRM) |
 | 14-17 | **WinRM** | Enable PS Remoting, allow unencrypted + Basic auth, firewall on port 5985 |
 | 18    | **Hostname** | Force rename (specialize `ComputerName` unreliable on 25H2) |
-| 19    | **virtio-win drivers** | Silent install `virtio-win-gt-x64.msi` from CD-ROM (D: or E:) -- VirtIO driver suite |
-| 20    | **virtio-win guest tools** | Silent install `virtio-win-guest-tools.exe` from CD-ROM (D: or E:) -- QEMU Guest Agent + spice agent |
-| 21-23 | **ACPI power button = shut down** | Set power button action to "Shut down" for AC/DC power schemes -- works with our [firmware fork][fw-fork]; defensive config for upstream firmware |
-| 24-25 | **Shutdown optimization** | Reduce `WaitToKillServiceTimeout` to 5s, disable shutdown named pipe check -- speeds up `shutdown /s /t 0` via SSH/WinRM |
-| 26    | **Shutdown without logon** | Allow remote shutdown when no user is logged in (required for SSH/WinRM `shutdown /s /t 0`) |
-| 27    | **Install marker** | Write `C:\install.success` to signal all FirstLogonCommands completed |
+| 19    | **virtio-win guest tools** | Silent install `virtio-win-guest-tools.exe` from CD-ROM (D: or E:) -- drivers + QEMU Guest Agent + spice agent |
+| 20-22 | **ACPI power button = shut down** | Set power button action to "Shut down" for AC/DC power schemes -- works with our [firmware fork][fw-fork]; defensive config for upstream firmware |
+| 23-24 | **Shutdown optimization** | Reduce `WaitToKillServiceTimeout` to 5s, disable shutdown named pipe check -- speeds up `shutdown /s /t 0` via SSH/WinRM |
+| 25    | **Shutdown without logon** | Allow remote shutdown when no user is logged in (required for SSH/WinRM `shutdown /s /t 0`) |
+| 26    | **Install marker** | Write `C:\install.success` to signal all FirstLogonCommands completed |
 
 ## Post-Clone Networking
 
