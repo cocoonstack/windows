@@ -15,7 +15,7 @@ With our [CH fork][ch-fork] and [firmware fork][fw-fork], all previously known W
 - virtio-win 0.1.285 works ([#7925][ch-7925], ctrl_queue + used_len fix)
 - ACPI power-button shutdown works ([firmware#422][fw-422], [firmware PR #423][fw-423])
 
-If using **upstream** (unpatched) Cloud Hypervisor, use v50.2 + virtio-win 0.1.240 + the SSH shutdown workaround. Track caveats in the Cocoon and Cloud Hypervisor issue trackers.
+If using **upstream** (unpatched) Cloud Hypervisor, use v50.2 + virtio-win 0.1.240 + the SSH shutdown workaround. Track caveats in the Cloud Hypervisor issue tracker.
 
 ### Installing patched binaries
 
@@ -28,7 +28,7 @@ curl -fsSL -o /usr/local/bin/cloud-hypervisor \
 chmod +x /usr/local/bin/cloud-hypervisor
 
 # CLOUDHV.fd firmware (patched: ACPI power-button / ResetSystem fix)
-curl -fsSL -o /var/lib/cocoon/firmware/CLOUDHV.fd \
+curl -fsSL -o /usr/local/share/cloud-hypervisor/CLOUDHV.fd \
   https://github.com/cocoonstack/rust-hypervisor-firmware/releases/download/dev/hypervisor-fw
 ```
 
@@ -36,7 +36,7 @@ These URLs are stable — they always point to the latest `dev` branch build. Ve
 
 ```bash
 cloud-hypervisor --version
-file /var/lib/cocoon/firmware/CLOUDHV.fd
+file /usr/local/share/cloud-hypervisor/CLOUDHV.fd
 ```
 
 [ch-fork]: https://github.com/cocoonstack/cloud-hypervisor/tree/dev
@@ -188,20 +188,17 @@ Get-WmiObject Win32_PnPSignedDriver | Where-Object { $_.DeviceName -match 'VirtI
 
 # --- virtio-win guest tools ---
 Get-WmiObject Win32_Product | Where-Object { $_.Name -match 'Virtio-win' } | Select-Object Name, Version
+
+# --- QEMU Guest Agent ---
+Get-Service QEMU-GA | Select-Object Status, StartType        # Running, Automatic
+
+# --- Install marker ---
+Test-Path C:\install.success                                   # True
+Get-Content C:\install.success                                 # timestamp of completion
 ```
 
 If any check fails after reboot, the corresponding autounattend.xml command may not have
 executed. Fix manually and re-verify before proceeding.
-
-### 8. Shut down and import to Cocoon
-
-```bash
-# Shut down the VM, then import the local qcow2 as cloudimg
-cocoon image import win11 windows-11-25h2.qcow2
-
-# Run with --windows flag
-cocoon vm run --windows --name win11 --cpu 2 --memory 4G --storage 40G win11
-```
 
 ## autounattend.xml Explained
 
@@ -234,7 +231,7 @@ The included [`autounattend.xml`](../autounattend.xml) automates the entire Wind
 
 - **User account**: local administrator `cocoon` with auto-logon (password base64-encoded in XML)
 - **OOBE**: hides EULA, online account, and wireless setup pages
-- **19 FirstLogonCommands** execute in order:
+- **27 FirstLogonCommands** execute in order:
 
 | Order | Action | Command |
 |-------|--------|---------|
@@ -249,15 +246,17 @@ The included [`autounattend.xml`](../autounattend.xml) automates the entire Wind
 | 13    | **Network profile** | Set to Private (required for WinRM) |
 | 14-17 | **WinRM** | Enable PS Remoting, allow unencrypted + Basic auth, firewall on port 5985 |
 | 18    | **Hostname** | Force rename (specialize `ComputerName` unreliable on 25H2) |
-| 19    | **virtio-win guest tools** | Silent install `virtio-win-gt-x64.msi` from CD-ROM (D: or E:) -- installs complete driver suite + balloon service |
-| 20-22 | **ACPI power button = shut down** | Set power button action to "Shut down" for AC/DC power schemes -- works with our [firmware fork][fw-fork]; defensive config for upstream firmware |
-| 23-24 | **Shutdown optimization** | Reduce `WaitToKillServiceTimeout` to 5s, disable shutdown named pipe check -- speeds up `shutdown /s /t 0` via SSH/WinRM |
-| 25    | **Shutdown without logon** | Allow remote shutdown when no user is logged in (required for SSH/WinRM `shutdown /s /t 0`) |
+| 19    | **virtio-win drivers** | Silent install `virtio-win-gt-x64.msi` from CD-ROM (D: or E:) -- VirtIO driver suite |
+| 20    | **virtio-win guest tools** | Silent install `virtio-win-guest-tools.exe` from CD-ROM (D: or E:) -- QEMU Guest Agent + spice agent |
+| 21-23 | **ACPI power button = shut down** | Set power button action to "Shut down" for AC/DC power schemes -- works with our [firmware fork][fw-fork]; defensive config for upstream firmware |
+| 24-25 | **Shutdown optimization** | Reduce `WaitToKillServiceTimeout` to 5s, disable shutdown named pipe check -- speeds up `shutdown /s /t 0` via SSH/WinRM |
+| 26    | **Shutdown without logon** | Allow remote shutdown when no user is logged in (required for SSH/WinRM `shutdown /s /t 0`) |
+| 27    | **Install marker** | Write `C:\install.success` to signal all FirstLogonCommands completed |
 
 ## Post-Clone Networking
 
 - **DHCP networks**: no action needed, Windows DHCP client auto-configures on new NIC
-- **Static IP**: configure via SAC serial console (`cocoon vm console`):
+- **Static IP**: configure via SAC serial console:
   ```
   cmd
   ch -si 1

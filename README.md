@@ -1,21 +1,14 @@
-# Windows Image Build Staging
+# Windows VM Image
 
-This repository is a staging area for the Windows image build materials extracted from `../cocoonv2/os-image/windows`.
-
-Right now it contains only the pieces we already have and need to review before wiring up automation:
+Build automation for Windows 11 25H2 disk images targeting Cloud Hypervisor.
 
 - `autounattend.xml`: unattended Windows setup configuration
-- `docs/build-guide.md`: the current manual build guide copied from Cocoon
+- `docs/build-guide.md`: manual build guide
 
-Not added yet:
+## Quick Start
 
-- GitHub Actions workflow
-- build/release scripts
-- release manifest and split-upload helpers
-- any ISO, firmware, or disk image artifacts
+See [docs/build-guide.md](docs/build-guide.md) for the full build guide.
 
-Recommended next step after review:
+## Why No Pre-built Images?
 
-1. Add a self-hosted KVM workflow to build the qcow2 image.
-2. Split the resulting qcow2 into sub-2 GiB parts.
-3. Publish those parts to GitHub Releases with checksums and a small manifest.
+Microsoft licensing prohibits public distribution of Windows disk images. This repo provides the automation code (`autounattend.xml` + build guide) instead.
