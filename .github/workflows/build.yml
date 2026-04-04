@@ -91,9 +91,7 @@ jobs:
 
       - name: Wait for installation to complete
         run: |
-          # Wait for SSH to become available and install.success to appear.
-          # Windows install typically takes 30-90 minutes.
-          MAX_WAIT=7200  # 2 hours
+          MAX_WAIT=7200
           INTERVAL=60
           ELAPSED=0
 
@@ -103,7 +101,6 @@ jobs:
             ELAPSED=$((ELAPSED + INTERVAL))
             echo "[${ELAPSED}s] Checking SSH on port ${SSH_PORT}..."
 
-            # Try SSH: check if install.success exists
             if sshpass -p 'C@c#on160' ssh -o StrictHostKeyChecking=no \
                 -o ConnectTimeout=10 -o UserKnownHostsFile=/dev/null \
                 -p "$SSH_PORT" cocoon@localhost \
@@ -116,21 +113,97 @@ jobs:
           echo "::error::Timed out waiting for installation after ${MAX_WAIT}s"
           exit 1
 
+      - name: Verify and remediate
+        run: |
+          SSH_OPTS="-o StrictHostKeyChecking=no -o ConnectTimeout=10 -o UserKnownHostsFile=/dev/null"
+
+          ssh_run() {
+            sshpass -p 'C@c#on160' ssh $SSH_OPTS -p "$SSH_PORT" cocoon@localhost "$@"
+          }
+
+          scp_to() {
+            sshpass -p 'C@c#on160' scp $SSH_OPTS -P "$SSH_PORT" "$@"
+          }
+
+          wait_for_ssh() {
+            echo "Waiting for SSH after reboot..."
+            sleep 30
+            for i in $(seq 1 60); do
+              if ssh_run "echo ok" 2>/dev/null | grep -q ok; then
+                echo "SSH back after ~$((30 + i * 5))s"
+                sleep 15  # let services stabilize
+                return 0
+              fi
+              sleep 5
+            done
+            echo "::error::SSH did not come back after reboot"
+            return 1
+          }
+
+          reboot_vm() {
+            echo "Rebooting VM..."
+            ssh_run "shutdown /r /t 5" 2>/dev/null || true
+            wait_for_ssh
+          }
+
+          run_verify() {
+            echo "--- Running verification ---"
+            ssh_run "powershell -ExecutionPolicy Bypass -File C:\\scripts\\verify.ps1"
+          }
+
+          run_remediate() {
+            echo "--- Running remediation ---"
+            ssh_run "powershell -ExecutionPolicy Bypass -File C:\\scripts\\remediate.ps1"
+          }
+
+          # Upload scripts
+          ssh_run "mkdir C:\\scripts" 2>/dev/null || true
+          scp_to scripts/verify.ps1 scripts/remediate.ps1 cocoon@localhost:"C:\\scripts\\"
+
+          # Pre-reboot verification (baseline)
+          echo "=== Pre-reboot verification ==="
+          run_verify || true
+
+          # First reboot to test persistence
+          reboot_vm
+
+          # Post-reboot verify-remediate loop
+          MAX_RETRIES=3
+          for attempt in $(seq 1 $MAX_RETRIES); do
+            echo ""
+            echo "=== Post-reboot verification (attempt $attempt/$MAX_RETRIES) ==="
+            if run_verify; then
+              echo "All checks passed after reboot!"
+              exit 0
+            fi
+
+            if [ "$attempt" -eq "$MAX_RETRIES" ]; then
+              echo "::error::Verification still failing after $MAX_RETRIES remediation attempts"
+              # Dump serial log for debugging
+              echo "--- serial.log tail ---"
+              tail -100 serial.log 2>/dev/null || true
+              exit 1
+            fi
+
+            echo "Some checks failed, remediating..."
+            run_remediate
+
+            reboot_vm
+          done
+
       - name: Shut down VM
         run: |
-          sshpass -p 'C@c#on160' ssh -o StrictHostKeyChecking=no \
-            -o UserKnownHostsFile=/dev/null \
+          sshpass -p 'C@c#on160' ssh \
+            -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
             -p "$SSH_PORT" cocoon@localhost \
             "shutdown /s /t 10" 2>/dev/null || true
 
-          # Wait for QEMU process to exit
           QEMU_PID=$(cat qemu.pid)
           for i in $(seq 1 60); do
             kill -0 "$QEMU_PID" 2>/dev/null || { echo "VM shut down after ${i}s"; break; }
             sleep 1
           done
 
-          # Force kill if still running
           kill -0 "$QEMU_PID" 2>/dev/null && { echo "Force killing QEMU"; kill -9 "$QEMU_PID"; sleep 2; }
 
       - name: Compress qcow2
