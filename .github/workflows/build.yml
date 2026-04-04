@@ -1,0 +1,195 @@
+name: Build Windows qcow2
+
+on:
+  workflow_dispatch:
+    inputs:
+      windows_version:
+        description: "Windows version tag (used in release name)"
+        required: true
+        default: "win11-25h2"
+      disk_size:
+        description: "Disk image size"
+        required: true
+        default: "40G"
+
+env:
+  VIRTIO_WIN_URL: "https://fedorapeople.org/groups/virt/virtio-win/direct-downloads/archive-virtio/virtio-win-0.1.285-1/virtio-win-0.1.285.iso"
+  SSH_PORT: 2222
+  QCOW2_NAME: "windows-11-25h2.qcow2"
+
+jobs:
+  build:
+    runs-on: self-hosted
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify KVM
+        run: |
+          test -e /dev/kvm || { echo "::error::KVM not available"; exit 1; }
+          ls -la /dev/kvm
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            qemu-system-x86 qemu-utils \
+            ovmf swtpm mtools \
+            openssh-client sshpass jq
+
+      - name: Download virtio-win ISO
+        run: curl -fsSL -o virtio-win.iso "$VIRTIO_WIN_URL"
+
+      - name: Download Windows ISO
+        run: |
+          test -n "${{ secrets.WINDOWS_ISO_URL }}" || { echo "::error::WINDOWS_ISO_URL secret not set"; exit 1; }
+          curl -fsSL -o windows.iso "${{ secrets.WINDOWS_ISO_URL }}"
+
+      - name: Create disk image
+        run: qemu-img create -f qcow2 "$QCOW2_NAME" "${{ inputs.disk_size }}"
+
+      - name: Prepare OVMF variables
+        run: cp /usr/share/OVMF/OVMF_VARS_4M.fd OVMF_VARS.fd
+
+      - name: Start TPM emulator
+        run: |
+          mkdir -p /tmp/mytpm
+          swtpm socket --tpmstate dir=/tmp/mytpm \
+            --ctrl type=unixio,path=/tmp/swtpm-sock \
+            --tpm2 --log level=5 &
+          sleep 1
+          test -S /tmp/swtpm-sock
+
+      - name: Create autounattend floppy
+        run: |
+          mkfs.fat -C autounattend.img 1440
+          mcopy -i autounattend.img autounattend.xml ::/autounattend.xml
+
+      - name: Install Windows
+        run: |
+          qemu-system-x86_64 \
+            -machine q35,accel=kvm,smm=on \
+            -cpu host,hv_relaxed,hv_spinlocks=0x1fff,hv_vapic,hv_time \
+            -m 8G -smp 4 \
+            -global driver=cfi.pflash01,property=secure,value=on \
+            -drive if=pflash,format=raw,readonly=on,file=/usr/share/OVMF/OVMF_CODE_4M.secboot.fd \
+            -drive if=pflash,format=raw,file=OVMF_VARS.fd \
+            -cdrom windows.iso \
+            -drive file=virtio-win.iso,index=1,media=cdrom \
+            -drive if=none,id=root,file="$QCOW2_NAME",format=qcow2 \
+            -device virtio-blk-pci,drive=root,disable-legacy=on \
+            -device virtio-net-pci,netdev=mynet0,disable-legacy=on \
+            -netdev user,id=mynet0,hostfwd=tcp::${SSH_PORT}-:22 \
+            -chardev socket,id=chrtpm,path=/tmp/swtpm-sock \
+            -tpmdev emulator,id=tpm0,chardev=chrtpm \
+            -device tpm-tis,tpmdev=tpm0 \
+            -vga none -nographic \
+            -drive file=autounattend.img,format=raw,if=floppy \
+            -serial file:serial.log \
+            -daemonize -pidfile qemu.pid
+          echo "QEMU started, PID=$(cat qemu.pid)"
+
+      - name: Wait for installation to complete
+        run: |
+          # Wait for SSH to become available and install.success to appear.
+          # Windows install typically takes 30-90 minutes.
+          MAX_WAIT=7200  # 2 hours
+          INTERVAL=60
+          ELAPSED=0
+
+          echo "Waiting for Windows installation to complete..."
+          while [ $ELAPSED -lt $MAX_WAIT ]; do
+            sleep $INTERVAL
+            ELAPSED=$((ELAPSED + INTERVAL))
+            echo "[${ELAPSED}s] Checking SSH on port ${SSH_PORT}..."
+
+            # Try SSH: check if install.success exists
+            if sshpass -p 'C@c#on160' ssh -o StrictHostKeyChecking=no \
+                -o ConnectTimeout=10 -o UserKnownHostsFile=/dev/null \
+                -p "$SSH_PORT" cocoon@localhost \
+                "if exist C:\\install.success echo READY" 2>/dev/null | grep -q READY; then
+              echo "install.success detected at ${ELAPSED}s"
+              exit 0
+            fi
+          done
+
+          echo "::error::Timed out waiting for installation after ${MAX_WAIT}s"
+          exit 1
+
+      - name: Shut down VM
+        run: |
+          sshpass -p 'C@c#on160' ssh -o StrictHostKeyChecking=no \
+            -o UserKnownHostsFile=/dev/null \
+            -p "$SSH_PORT" cocoon@localhost \
+            "shutdown /s /t 10" 2>/dev/null || true
+
+          # Wait for QEMU process to exit
+          QEMU_PID=$(cat qemu.pid)
+          for i in $(seq 1 60); do
+            kill -0 "$QEMU_PID" 2>/dev/null || { echo "VM shut down after ${i}s"; break; }
+            sleep 1
+          done
+
+          # Force kill if still running
+          kill -0 "$QEMU_PID" 2>/dev/null && { echo "Force killing QEMU"; kill -9 "$QEMU_PID"; sleep 2; }
+
+      - name: Compress qcow2
+        run: |
+          echo "Original size: $(du -sh "$QCOW2_NAME" | cut -f1)"
+          qemu-img convert -O qcow2 -c "$QCOW2_NAME" "${QCOW2_NAME%.qcow2}-compressed.qcow2"
+          mv "${QCOW2_NAME%.qcow2}-compressed.qcow2" "$QCOW2_NAME"
+          echo "Compressed size: $(du -sh "$QCOW2_NAME" | cut -f1)"
+
+      - name: Split image and generate checksums
+        run: |
+          # Split into sub-2GiB parts for GitHub Releases
+          split -b 1900M -d --additional-suffix=.part "$QCOW2_NAME" "${QCOW2_NAME}."
+          rm "$QCOW2_NAME"
+
+          # Generate checksums
+          sha256sum *.part > SHA256SUMS
+          cat SHA256SUMS
+
+          # Generate manifest
+          cat > manifest.json <<MANIFEST
+          {
+          "version": "${{ inputs.windows_version }}",
+          "created": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+          "original_name": "$QCOW2_NAME",
+          "disk_size": "${{ inputs.disk_size }}",
+          "parts": $(ls -1 *.part | jq -R . | jq -s .),
+          "reassemble": "cat ${QCOW2_NAME}.*.part > ${QCOW2_NAME}"
+          }
+          MANIFEST
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ inputs.windows_version }}-$(date +%Y%m%d)"
+          gh release create "$TAG" \
+            --title "Windows Image ${{ inputs.windows_version }}" \
+            --notes "$(cat <<'NOTES'
+## Windows 11 25H2 qcow2 image
+
+### Reassemble
+```bash
+# Download all .part files, then:
+cat windows-11-25h2.qcow2.*.part > windows-11-25h2.qcow2
+sha256sum -c SHA256SUMS
+```
+
+### Verify
+```bash
+qemu-img info windows-11-25h2.qcow2
+```
+NOTES
+)" \
+            *.part SHA256SUMS manifest.json
+
+      - name: Cleanup
+        if: always()
+        run: |
+          kill $(cat qemu.pid 2>/dev/null) 2>/dev/null || true
+          sudo rm -rf /tmp/mytpm
+          rm -f windows.iso virtio-win.iso OVMF_VARS.fd autounattend.img qemu.pid
