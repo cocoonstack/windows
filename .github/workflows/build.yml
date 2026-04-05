@@ -51,7 +51,7 @@ jobs:
         run: |
           sudo apt-get install -y --no-install-recommends \
             qemu-system-x86 qemu-utils \
-            ovmf swtpm mtools genisoimage \
+            ovmf swtpm mtools xorriso \
             openssh-client sshpass netcat-openbsd
 
       - name: Install oras
@@ -69,13 +69,50 @@ jobs:
           WINDOWS_ISO_URL: ${{ secrets.WINDOWS_ISO_URL }}
         run: |
           test -n "$WINDOWS_ISO_URL" || { echo "::error::WINDOWS_ISO_URL secret not set"; exit 1; }
-          curl -fsSL -o windows.iso "$WINDOWS_ISO_URL"
-          ls -lh windows.iso
+          curl -fsSL -o windows-orig.iso "$WINDOWS_ISO_URL"
+          ls -lh windows-orig.iso
 
       - name: Download virtio-win ISO
         run: |
           curl -fsSL -o virtio-win.iso "$VIRTIO_WIN_URL"
           ls -lh virtio-win.iso
+
+      - name: Repack Windows ISO with autounattend.xml at root
+        # Two things happen here, both critical for a zero-interaction build:
+        #
+        # 1. Inject autounattend.xml at the ISO root. SetupHost on Win11 24H2+
+        #    only skips the "Select language settings" / "Select keyboard
+        #    settings" pickers if it finds autounattend.xml on the *install
+        #    media itself* -- autounattend delivered on a separate removable
+        #    medium (second CD, floppy, etc.) is picked up too late, after
+        #    the modernized UI has already rendered the pickers.
+        #
+        # 2. Use efi/microsoft/boot/efisys_noprompt.bin as the EFI boot
+        #    image instead of the default efisys.bin. Both files ship on
+        #    every Windows ISO; the "noprompt" variant skips the "Press any
+        #    key to boot from CD" prompt that bootmgfw.efi otherwise renders
+        #    on every UEFI CD boot, so there is nothing to key-spray.
+        #
+        # install.wim is 7+ GiB so xorriso is required (legacy mkisofs caps
+        # at 4 GiB files). -iso-level 3 enables large-file support.
+        run: |
+          mkdir -p iso_src
+          sudo mount -o loop,ro windows-orig.iso /mnt
+          cp -a /mnt/. iso_src/
+          sudo umount /mnt
+          chmod -R u+w iso_src
+          cp autounattend.xml iso_src/autounattend.xml
+          xorriso -as mkisofs \
+            -iso-level 3 \
+            -J -joliet-long -R \
+            -V "WIN11_25H2_UA" \
+            -b boot/etfsboot.com -no-emul-boot -boot-load-size 8 -boot-info-table \
+            -eltorito-alt-boot \
+            -e efi/microsoft/boot/efisys_noprompt.bin -no-emul-boot \
+            -o windows.iso \
+            iso_src/
+          rm -rf iso_src windows-orig.iso
+          ls -lh windows.iso
 
       - name: Create disk image
         run: qemu-img create -f qcow2 "$QCOW2_NAME" "${{ inputs.disk_size }}"
@@ -92,15 +129,23 @@ jobs:
           sleep 2
           test -S /tmp/swtpm-sock
 
-      - name: Create autounattend ISO
-        run: |
-          genisoimage -o autounattend.iso -J -r autounattend.xml
-          ls -lh autounattend.iso
-
       - name: Launch QEMU (Windows installer)
-        # Secure Boot OVMF + smm required for Win11 hardware check
-        # Explicit ide-cd on separate ide.N buses (q35 AHCI needs individual ports)
-        # -display none + -monitor tcp for headless with keypress injection
+        # With autounattend.xml embedded in the install ISO at the root and
+        # booted via efisys_noprompt.bin, there is nothing to key-spray and
+        # no picker to click past -- Setup starts automatically, reads the
+        # unattend file immediately, and proceeds straight to partitioning.
+        #
+        # No `bootindex=` on any device: OVMF's default boot order (disk
+        # first, then removable CDs) handles both phases correctly. On the
+        # first boot the disk is empty so OVMF falls through to the Windows
+        # ISO; once Setup writes Windows Boot Manager to the ESP and records
+        # an NVRAM entry, subsequent reboots land on the disk automatically.
+        # Hard-pinning CD to bootindex=0 caused an infinite reinstall loop
+        # because the pin overrode Windows' own boot order changes.
+        #
+        # `-device ide-cd` on explicit ide.N buses is needed on q35 because
+        # each ide.N supports only one unit and OVMF refuses to enumerate
+        # CDs landed on the wrong port by `-cdrom` shorthand.
         run: |
           qemu-system-x86_64 \
             -machine q35,accel=kvm,smm=on \
@@ -110,11 +155,9 @@ jobs:
             -drive if=pflash,format=raw,readonly=on,file=/usr/share/OVMF/OVMF_CODE_4M.secboot.fd \
             -drive if=pflash,format=raw,file=OVMF_VARS.fd \
             -drive id=cd0,if=none,file=windows.iso,media=cdrom,readonly=on \
-            -device ide-cd,drive=cd0,bus=ide.0,bootindex=0 \
+            -device ide-cd,drive=cd0,bus=ide.0 \
             -drive id=cd1,if=none,file=virtio-win.iso,media=cdrom,readonly=on \
             -device ide-cd,drive=cd1,bus=ide.1 \
-            -drive id=cd2,if=none,file=autounattend.iso,media=cdrom,readonly=on \
-            -device ide-cd,drive=cd2,bus=ide.2 \
             -drive if=none,id=root,file="$QCOW2_NAME",format=qcow2 \
             -device virtio-blk-pci,drive=root,disable-legacy=on \
             -device virtio-net-pci,netdev=mynet0,disable-legacy=on \
@@ -131,72 +174,27 @@ jobs:
             -daemonize -pidfile qemu.pid
           echo "QEMU started, PID=$(cat qemu.pid)"
 
-      - name: Defeat "Press any key to boot from CD" prompt
-        # Spam Enter keys 2s..40s after start so one lands in the Windows
-        # bootloader timeout window (~5s from OVMF load). GitHub-hosted
-        # ubuntu-latest runners are noticeably slower than GCP n2 VMs at
-        # cold OVMF init, so the original 2..17s window was too tight --
-        # this one covers up to 40s which is still comfortably before the
-        # Alt+N picker spray kicks in.
-        run: |
-          for delay in 2 1 1 1 1 1 1 1 1 1 1 1 1 1 1 2 2 2 2 2 2 2 2 2 2; do
-            sleep $delay
-            echo 'sendkey ret' | nc -w 1 -q 1 127.0.0.1 4444 >/dev/null
-          done
-          echo "Enter keys sent"
-
-      - name: Click past Win11 25H2 Setup language + keyboard pickers
-        # Windows 11 24H2+ modernized Setup (SetupHost.exe) shows a mandatory
-        # "Select language settings" screen BEFORE it reads autounattend.xml.
-        # Nothing in the unattend XML skips it -- not SetupUILanguage, not
-        # SystemLocale, nothing. See "Quirk #5" in README.md.
-        #
-        # The reliable fix is a QMP absolute mouse click on the Next button.
-        # We used to rely on `sendkey alt-n` via HMP (Alt+N is the Next button
-        # accelerator), and that works on some environments, but on others
-        # Windows Setup UI silently ignores every keyboard event from the
-        # i8042 PS/2 controller after it switches to the PnP input stack,
-        # leaving Alt+N firing into a void and the spray watchdog timing out.
-        #
-        # QMP input-send-event with abs coordinates bypasses the keyboard
-        # path entirely and targets the USB tablet, which always reaches
-        # the Setup UI regardless of whether keyboard focus was grabbed.
-        #
-        # Both mechanisms run in parallel: whichever lands first advances
-        # Setup, the disk-growth watchdog (>500 MB means partitioning has
-        # started) stops the loop. The second picker ("Select keyboard
-        # settings") never shows in practice because autounattend.xml's
-        # InputLocale=0409:00000409 is applied between the two pickers.
-        run: |
-          # Next button center is at (900, 635) in the 1280x800 VNC frame.
-          for i in $(seq 1 120); do
-            sleep 3
-            # Try Alt+N first (fast, HMP), then QMP mouse click. Either works.
-            echo 'sendkey alt-n' | nc -w 1 -q 1 127.0.0.1 4444 >/dev/null 2>&1
-            python3 scripts/qmp_click.py 900 635 >/dev/null 2>&1 || true
-            DISK_K=$(du -k "$QCOW2_NAME" | cut -f1)
-            if [ "$DISK_K" -gt 500000 ]; then
-              echo "Setup past pickers (disk=${DISK_K}K at iter=$i)"
-              break
-            fi
-          done
-          if [ "$DISK_K" -le 500000 ]; then
-            echo "::error::Disk still ${DISK_K}K after $((120*3))s, Setup did not advance"
-            echo 'screendump screen.ppm' | nc -w 1 -q 1 127.0.0.1 4444 || true
-            ls -la screen.ppm 2>/dev/null || true
-            exit 1
-          fi
-
       - name: Wait for install.success marker
-        # ConnectTimeout=30 (not 5) + 3 retries per iteration. During heavy
-        # FirstLogonCommands (TiWorker / DISM / virtio-win guest tools install)
-        # the Windows SSH server can take >5s to accept connections, and a
-        # short timeout would silently fail on every iteration and never
-        # detect the marker -- validated on GCP test build where install.success
-        # existed 11 min before the old 5s poll loop noticed.
+        # Setup goes through several phases:
+        #   1. WinPE image apply (disk grows 0 -> ~11 GiB)
+        #   2. Reboot into installed Windows
+        #   3. Specialize pass
+        #   4. Reboot
+        #   5. OOBE + FirstLogonCommands (SSH install, virtio-win tools,
+        #      WinRM, hostname, shutdown tweaks)
+        #   6. C:\install.success written by the last FirstLogonCommand
+        #
+        # Stall guard: if disk has been >5 GiB and hasn't grown in 20 min,
+        # issue a QMP system_reset. Windows Setup occasionally stalls at
+        # the Phase 1 -> Phase 2 reboot on QEMU/OVMF when the guest's
+        # UEFI reset path hangs before returning to BDS; a host-issued
+        # reset kicks BDS into re-reading NVRAM, finding the newly-written
+        # Windows Boot Manager entry, and booting Phase 2 from disk.
         run: |
           MAX_WAIT=7200
           ELAPSED=0
+          LAST_DISK=0
+          STALL_START=0
           while [ $ELAPSED -lt $MAX_WAIT ]; do
             sleep 60
             ELAPSED=$((ELAPSED + 60))
@@ -205,7 +203,8 @@ jobs:
               tail -40 serial.log
               exit 1
             fi
-            DISK=$(du -sh "$QCOW2_NAME" | cut -f1)
+            DISK_K=$(du -k "$QCOW2_NAME" | cut -f1)
+            DISK_H=$(du -sh "$QCOW2_NAME" | cut -f1)
             FOUND=""
             for try in 1 2 3; do
               if sshpass -p "$WIN_PASS" ssh -o StrictHostKeyChecking=no \
@@ -219,33 +218,33 @@ jobs:
               sleep 2
             done
             if [ -n "$FOUND" ]; then
-              echo "install.success detected at ${ELAPSED}s (disk=${DISK})"
+              echo "install.success detected at ${ELAPSED}s (disk=${DISK_H})"
               exit 0
             fi
-            echo "[${ELAPSED}s] waiting... disk=${DISK}"
+            # Stall detection
+            if [ "$DISK_K" -gt 5242880 ] && [ "$DISK_K" -eq "$LAST_DISK" ]; then
+              if [ "$STALL_START" -eq 0 ]; then STALL_START=$ELAPSED; fi
+              STALL=$((ELAPSED - STALL_START))
+              echo "[${ELAPSED}s] disk=${DISK_H} stalled for ${STALL}s"
+              if [ "$STALL" -ge 1200 ]; then
+                echo "[${ELAPSED}s] stall > 20 min, issuing QMP system_reset"
+                python3 -c "
+          import socket, json, time
+          s = socket.socket(); s.connect(('127.0.0.1', 4445))
+          s.recv(4096)
+          s.sendall(b'{\"execute\":\"qmp_capabilities\"}\n'); time.sleep(0.3); s.recv(4096)
+          s.sendall(b'{\"execute\":\"system_reset\"}\n'); time.sleep(0.3); print(s.recv(4096))
+          s.close()"
+                STALL_START=0
+              fi
+            else
+              STALL_START=0
+            fi
+            LAST_DISK=$DISK_K
+            echo "[${ELAPSED}s] waiting... disk=${DISK_H}"
           done
           echo "::error::Timed out after ${MAX_WAIT}s"
           exit 1
-
-      - name: Eject install CDs via QEMU monitor
-        # After the install finishes, the CDs MUST be ejected from the QEMU
-        # monitor before the first VM reboot. Reason: we pin the Windows ISO
-        # to bootindex=0 so OVMF always tries Boot0001 first; on the initial
-        # install that is exactly what we want (key spray defeats "Press any
-        # key to boot from CD"), but on a warm reboot Windows bootmgr still
-        # renders the prompt, still times out, and OVMF then *re-loops* on
-        # Boot0001 instead of falling through to the disk entry. Result: the
-        # VM sits forever at two pegged CPUs in OVMF BDS retrying the CD, the
-        # post-reboot `wait_for_ssh` hits its 5 min timeout and the job fails.
-        #
-        # Using `eject` + `change ... none` via the monitor removes the CDs
-        # from the boot order and OVMF picks Boot0002 (Windows Boot Manager
-        # on the virtio-blk disk) immediately on the next reboot.
-        run: |
-          printf 'eject -f cd0\n' | nc -w 1 -q 1 127.0.0.1 4444
-          printf 'eject -f cd1\n' | nc -w 1 -q 1 127.0.0.1 4444
-          printf 'eject -f cd2\n' | nc -w 1 -q 1 127.0.0.1 4444 2>/dev/null || true
-          printf 'info block\n' | nc -w 1 -q 1 127.0.0.1 4444
 
       - name: Verify and remediate
         run: |
@@ -269,12 +268,17 @@ jobs:
 
           reboot_vm() { ssh_run "shutdown /r /t 5" 2>/dev/null || true; wait_for_ssh; }
 
-          ssh_run "mkdir C:\\scripts" 2>/dev/null || true
-          scp_to scripts/verify.ps1 scripts/remediate.ps1 cocoon@localhost:"C:\\scripts\\"
+          ssh_run "if not exist C:\\scripts mkdir C:\\scripts" 2>/dev/null || true
+          scp_to scripts/verify.ps1 scripts/remediate.ps1 cocoon@localhost:"C:/scripts/"
 
           echo "=== Pre-reboot verification ==="
           ssh_run "powershell -ExecutionPolicy Bypass -File C:\\scripts\\verify.ps1" || true
 
+          # User-reported requirement: reboot once before shutdown so pending
+          # updates install during the reboot. WinRM service settings do not
+          # persist through the first post-install reboot (known Windows
+          # quirk with Enable-PSRemoting during OOBE); remediate.ps1 restores
+          # them. After this loop the image is clean and ready for shutdown.
           reboot_vm
 
           for attempt in 1 2 3; do
@@ -304,7 +308,7 @@ jobs:
 
       - name: Free disk before compression
         run: |
-          rm -f windows.iso virtio-win.iso autounattend.iso
+          rm -f windows.iso virtio-win.iso
           df -h /
 
       - name: Compress qcow2
