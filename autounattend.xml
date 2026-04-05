@@ -2,11 +2,7 @@
 <unattend xmlns="urn:schemas-microsoft-com:unattend">
   <settings pass="windowsPE">
     <component name="Microsoft-Windows-International-Core-WinPE" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
-      <SetupUILanguage><UILanguage>en-GB</UILanguage></SetupUILanguage>
       <InputLocale>0409:00000409</InputLocale>
-      <UILanguage>en-GB</UILanguage>
-      <SystemLocale>en-GB</SystemLocale>
-      <UserLocale>en-GB</UserLocale>
     </component>
     <component name="Microsoft-Windows-PnpCustomizationsWinPE" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
       <DriverPaths>
@@ -55,18 +51,12 @@
     </component>
     <component name="Microsoft-Windows-International-Core" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
       <InputLocale>0409:00000409</InputLocale>
-      <SystemLocale>en-GB</SystemLocale>
-      <UILanguage>en-GB</UILanguage>
-      <UserLocale>en-GB</UserLocale>
     </component>
   </settings>
   <settings pass="oobeSystem">
-    <!-- V11: Force locale in oobeSystem to skip OOBE country/keyboard screens (Win11 25H2) -->
+    <!-- V11: Force US keyboard in oobeSystem; locale untouched so image default is used -->
     <component name="Microsoft-Windows-International-Core" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
       <InputLocale>0409:00000409</InputLocale>
-      <SystemLocale>en-GB</SystemLocale>
-      <UILanguage>en-GB</UILanguage>
-      <UserLocale>en-GB</UserLocale>
     </component>
     <component name="Microsoft-Windows-Shell-Setup" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
       <OOBE><HideEULAPage>true</HideEULAPage><HideOnlineAccountScreens>true</HideOnlineAccountScreens><HideWirelessSetupInOOBE>true</HideWirelessSetupInOOBE><ProtectYourPC>3</ProtectYourPC></OOBE>
