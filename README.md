@@ -340,7 +340,7 @@ The included [`autounattend.xml`](autounattend.xml) drives the install across th
 - **International-Core**: `InputLocale=0409:00000409` only. The component must be present here for Windows 11 25H2 OOBE to skip the country / keyboard selection screens, but we deliberately do not pin `SystemLocale`/`UILanguage`/`UserLocale` so the image default wins.
 - **OOBE**: hides EULA, online account, wireless setup.
 - **User account**: local admin `cocoon` with auto-logon (password base64-encoded in XML).
-- **FirstLogonCommands**: 27 commands.
+- **FirstLogonCommands**: 26 commands.
 
 | Order  | Action                       | Notes |
 |--------|------------------------------|-------|
@@ -349,18 +349,17 @@ The included [`autounattend.xml`](autounattend.xml) drives the install across th
 | 5      | **ICMP**                     | Allow ping |
 | 6      | **Firewall**                 | Disable all profiles (dev/test environment) |
 | 7      | **Hibernate**                | `powercfg /h off` |
-| 8-10   | **SAC / EMS**                | `bcdedit /emssettings emsport:1 emsbaudrate:115200`, `/ems on`, `/bootems on` |
+| 8-10   | **SAC / EMS**                | `bcdedit /emssettings emsport:1 emsbaudrate:115200`, `/ems on`, `/bootems on` — enables the in-kernel SAC serial console (no FoD needed; the `Windows.Desktop.EMS-SAC.Tools` capability only adds optional extra admin CLI tools and is NotPresent on EN-Intl Pro SKU, so we don't bother installing it) |
 | 11     | **TermService**              | Set to auto-start |
-| 12     | **EMS-SAC Tools**            | `Add-WindowsCapability Windows.Desktop.EMS-SAC.Tools~~~~0.0.1.0` — wrapped in `Start-Job` + `Wait-Job -Timeout 1200` so a hung FoD download from Windows Update cannot block the rest of the sequence indefinitely. This FoD is NotPresent on some Pro SKUs (EN-Intl ISO, ImageIndex=6 Pro) and the install can fail with no network source — base EMS/SAC serial console still works because it is built into the kernel; the FoD only adds additional admin CLI tools |
-| 13     | **Network profile**          | Set to Private (required before WinRM AllowUnencrypted) |
-| 14-17  | **WinRM**                    | Enable PS Remoting, AllowUnencrypted, Basic auth, firewall on 5985 |
-| 18     | **Hostname**                 | Force `Rename-Computer` to `COCOON-VM` (specialize ComputerName unreliable on 25H2) |
-| 19     | **virtio-win guest tools**   | Silent install `virtio-win-guest-tools.exe /S` from CD-ROM — drivers + QEMU Guest Agent + spice agent in one shot |
-| 20     | **Unhide PBUTTONACTION**     | `powercfg /attributes ... -ATTRIB_HIDE` — on Win11 25H2 the physical power-button setting is hidden (Attributes=1), so every subsequent `powercfg /setacvalueindex SUB_BUTTONS PBUTTONACTION ...` silently no-ops until the setting is unhidden |
-| 21-23  | **ACPI power button = Shut down** | `PBUTTONACTION=3` for AC + DC power schemes, referenced by full GUID because the friendly alias does not resolve while the setting is hidden |
-| 24-25  | **Shutdown optimization**    | `WaitToKillServiceTimeout=5000`, `DisableShutdownNamedPipeCheck=1` |
-| 26     | **Shutdown without logon**   | Allow remote `shutdown /s /t 0` with no user logged in |
-| 27     | **Install marker**           | `cmd /c "echo %date% %time% > C:\install.success"` |
+| 12     | **Network profile**          | Set to Private (required before WinRM AllowUnencrypted) |
+| 13-16  | **WinRM**                    | Enable PS Remoting, AllowUnencrypted, Basic auth, firewall on 5985 |
+| 17     | **Hostname**                 | Force `Rename-Computer` to `COCOON-VM` (specialize ComputerName unreliable on 25H2) |
+| 18     | **virtio-win guest tools**   | Silent install `virtio-win-guest-tools.exe /S` from CD-ROM — drivers + QEMU Guest Agent + spice agent in one shot |
+| 19     | **Unhide PBUTTONACTION**     | `powercfg /attributes ... -ATTRIB_HIDE` — on Win11 25H2 the physical power-button setting is hidden (Attributes=1), so every subsequent `powercfg /setacvalueindex SUB_BUTTONS PBUTTONACTION ...` silently no-ops until the setting is unhidden |
+| 20-22  | **ACPI power button = Shut down** | `PBUTTONACTION=3` for AC + DC power schemes, referenced by full GUID because the friendly alias does not resolve while the setting is hidden |
+| 23-24  | **Shutdown optimization**    | `WaitToKillServiceTimeout=5000`, `DisableShutdownNamedPipeCheck=1` |
+| 25     | **Shutdown without logon**   | Allow remote `shutdown /s /t 0` with no user logged in |
+| 26     | **Install marker**           | `cmd /c "echo %date% %time% > C:\install.success"` |
 
 ## Post-clone networking
 

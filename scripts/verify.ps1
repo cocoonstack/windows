@@ -86,10 +86,6 @@ $vgt = Get-ItemProperty "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninsta
     Where-Object { $_.DisplayName -match 'Virtio-win' }
 Check "virtio-win guest tools installed" ($null -ne $vgt)
 
-# --- EMS-SAC Tools (FoD) ---
-$emsCap = Get-WindowsCapability -Online -Name "Windows.Desktop.EMS-SAC.Tools~~~~0.0.1.0"
-Check "EMS-SAC Tools capability installed" ($emsCap.State -eq "Installed")
-
 # --- Install marker ---
 Check "C:\install.success exists" (Test-Path C:\install.success)
 
