@@ -129,10 +129,14 @@ jobs:
           echo "QEMU started, PID=$(cat qemu.pid)"
 
       - name: Defeat "Press any key to boot from CD" prompt
-        # Spam Enter keys 2s..17s after start so one lands in the Windows
-        # bootloader timeout window (~5s from OVMF load).
+        # Spam Enter keys 2s..40s after start so one lands in the Windows
+        # bootloader timeout window (~5s from OVMF load). GitHub-hosted
+        # ubuntu-latest runners are noticeably slower than GCP n2 VMs at
+        # cold OVMF init, so the original 2..17s window was too tight --
+        # this one covers up to 40s which is still comfortably before the
+        # Alt+N picker spray kicks in.
         run: |
-          for delay in 2 1 1 1 1 1 1 1 1 1 1 1 1 1 1; do
+          for delay in 2 1 1 1 1 1 1 1 1 1 1 1 1 1 1 2 2 2 2 2 2 2 2 2 2; do
             sleep $delay
             echo 'sendkey ret' | nc -w 1 -q 1 127.0.0.1 4444 >/dev/null
           done
@@ -151,7 +155,10 @@ jobs:
         # growing -- that signals Setup has read autounattend.xml and begun
         # partitioning / file copy.
         run: |
-          for i in $(seq 1 60); do
+          # 120 iterations x 3s = 6 min window (was 60 iterations = 3 min).
+          # GCP n2 VMs reach the second picker within ~90 s; ubuntu-latest
+          # runners may need twice that.
+          for i in $(seq 1 120); do
             sleep 3
             echo 'sendkey alt-n' | nc -w 1 -q 1 127.0.0.1 4444 >/dev/null
             DISK_K=$(du -k "$QCOW2_NAME" | cut -f1)
@@ -161,11 +168,19 @@ jobs:
             fi
           done
           if [ "$DISK_K" -le 500000 ]; then
-            echo "::error::Disk still ${DISK_K}K after 60 Alt+N presses, Setup did not advance"
+            echo "::error::Disk still ${DISK_K}K after 120 Alt+N presses, Setup did not advance"
+            echo 'screendump /tmp/screen.ppm' | nc -w 1 -q 1 127.0.0.1 4444 || true
+            ls -la /tmp/screen.ppm 2>/dev/null || true
             exit 1
           fi
 
       - name: Wait for install.success marker
+        # ConnectTimeout=30 (not 5) + 3 retries per iteration. During heavy
+        # FirstLogonCommands (TiWorker / DISM / virtio-win guest tools install)
+        # the Windows SSH server can take >5s to accept connections, and a
+        # short timeout would silently fail on every iteration and never
+        # detect the marker -- validated on GCP test build where install.success
+        # existed 11 min before the old 5s poll loop noticed.
         run: |
           MAX_WAIT=7200
           ELAPSED=0
@@ -178,10 +193,19 @@ jobs:
               exit 1
             fi
             DISK=$(du -sh "$QCOW2_NAME" | cut -f1)
-            if sshpass -p "$WIN_PASS" ssh -o StrictHostKeyChecking=no \
-                -o ConnectTimeout=5 -o UserKnownHostsFile=/dev/null \
-                -p "$SSH_PORT" cocoon@localhost \
-                "if exist C:\\install.success echo READY" 2>/dev/null | grep -q READY; then
+            FOUND=""
+            for try in 1 2 3; do
+              if sshpass -p "$WIN_PASS" ssh -o StrictHostKeyChecking=no \
+                  -o ConnectTimeout=30 -o ServerAliveInterval=10 \
+                  -o UserKnownHostsFile=/dev/null \
+                  -p "$SSH_PORT" cocoon@localhost \
+                  "if exist C:\\install.success echo READY" 2>/dev/null | grep -q READY; then
+                FOUND=1
+                break
+              fi
+              sleep 2
+            done
+            if [ -n "$FOUND" ]; then
               echo "install.success detected at ${ELAPSED}s (disk=${DISK})"
               exit 0
             fi
@@ -316,6 +340,29 @@ jobs:
 
           echo "Pushed: $REF"
           echo "Pushed: ghcr.io/${REPO_LC}:${{ inputs.version_tag }}"
+
+      - name: Capture diagnostic screenshot
+        if: always()
+        run: |
+          if [ -f qemu.pid ] && kill -0 "$(cat qemu.pid)" 2>/dev/null; then
+            echo 'screendump screen.ppm' | nc -w 1 -q 1 127.0.0.1 4444 || true
+            if [ -f screen.ppm ]; then
+              sudo apt-get install -y -qq imagemagick 2>/dev/null || true
+              convert screen.ppm screen.png 2>/dev/null || true
+            fi
+          fi
+
+      - name: Upload debug artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: debug-${{ github.run_id }}
+          if-no-files-found: ignore
+          retention-days: 7
+          path: |
+            serial.log
+            screen.png
+            screen.ppm
 
       - name: Cleanup
         if: always()
