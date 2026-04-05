@@ -77,13 +77,18 @@ Check "shutdownwithoutlogon = 1" ($swl -eq 1)
 Check "Hostname = COCOON-VM" ((hostname) -eq "COCOON-VM")
 
 # --- VirtIO drivers ---
+# Minimum 2 (viostor + NetKVM); Balloon only present if host exposes virtio-balloon device
 $vd = Get-WmiObject Win32_PnPSignedDriver | Where-Object { $_.DeviceName -match 'VirtIO' }
-Check "VirtIO drivers (>=3)" ($vd.Count -ge 3)
+Check "VirtIO drivers (>=2)" ($vd.Count -ge 2)
 
 # --- virtio-win guest tools ---
 $vgt = Get-ItemProperty "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*" |
     Where-Object { $_.DisplayName -match 'Virtio-win' }
 Check "virtio-win guest tools installed" ($null -ne $vgt)
+
+# --- EMS-SAC Tools (FoD) ---
+$emsCap = Get-WindowsCapability -Online -Name "Windows.Desktop.EMS-SAC.Tools~~~~0.0.1.0"
+Check "EMS-SAC Tools capability installed" ($emsCap.State -eq "Installed")
 
 # --- Install marker ---
 Check "C:\install.success exists" (Test-Path C:\install.success)

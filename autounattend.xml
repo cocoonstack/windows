@@ -5,6 +5,8 @@
       <SetupUILanguage><UILanguage>en-GB</UILanguage></SetupUILanguage>
       <InputLocale>0409:00000409</InputLocale>
       <UILanguage>en-GB</UILanguage>
+      <SystemLocale>en-GB</SystemLocale>
+      <UserLocale>en-GB</UserLocale>
     </component>
     <component name="Microsoft-Windows-PnpCustomizationsWinPE" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
       <DriverPaths>
@@ -53,10 +55,19 @@
     </component>
     <component name="Microsoft-Windows-International-Core" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
       <InputLocale>0409:00000409</InputLocale>
-      <UserLocale>en-US</UserLocale>
+      <SystemLocale>en-GB</SystemLocale>
+      <UILanguage>en-GB</UILanguage>
+      <UserLocale>en-GB</UserLocale>
     </component>
   </settings>
   <settings pass="oobeSystem">
+    <!-- V11: Force locale in oobeSystem to skip OOBE country/keyboard screens (Win11 25H2) -->
+    <component name="Microsoft-Windows-International-Core" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+      <InputLocale>0409:00000409</InputLocale>
+      <SystemLocale>en-GB</SystemLocale>
+      <UILanguage>en-GB</UILanguage>
+      <UserLocale>en-GB</UserLocale>
+    </component>
     <component name="Microsoft-Windows-Shell-Setup" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
       <OOBE><HideEULAPage>true</HideEULAPage><HideOnlineAccountScreens>true</HideOnlineAccountScreens><HideWirelessSetupInOOBE>true</HideWirelessSetupInOOBE><ProtectYourPC>3</ProtectYourPC></OOBE>
       <UserAccounts><LocalAccounts><LocalAccount wcm:action="add"><Name>cocoon</Name><Group>Administrators</Group><Password><Value>QwBAAGMAIwBvAG4AMQA2ADAAUABhAHMAcwB3AG8AcgBkAA==</Value><PlainText>false</PlainText></Password></LocalAccount></LocalAccounts></UserAccounts>
@@ -73,7 +84,8 @@
         <SynchronousCommand wcm:action="add"><Order>9</Order><CommandLine>bcdedit /ems on</CommandLine></SynchronousCommand>
         <SynchronousCommand wcm:action="add"><Order>10</Order><CommandLine>bcdedit /bootems on</CommandLine></SynchronousCommand>
         <SynchronousCommand wcm:action="add"><Order>11</Order><CommandLine>sc config TermService start=auto</CommandLine></SynchronousCommand>
-        <SynchronousCommand wcm:action="add"><Order>12</Order><CommandLine>powershell -Command "Add-WindowsCapability -Online -Name Windows.Desktop.EMS-SAC.Tools~~~~0.0.1.0"</CommandLine></SynchronousCommand>
+        <!-- V11: EMS-SAC wrapped in 20min timeout (FoD download from Windows Update can hang) -->
+        <SynchronousCommand wcm:action="add"><Order>12</Order><CommandLine>powershell -Command "$j = Start-Job { Add-WindowsCapability -Online -Name Windows.Desktop.EMS-SAC.Tools~~~~0.0.1.0 }; if (Wait-Job $j -Timeout 1200) { Receive-Job $j } else { Stop-Job $j; Write-Output 'EMS-SAC install timed out after 20min' }; Remove-Job $j -Force"</CommandLine></SynchronousCommand>
         <!-- V10: Set network Private (required before WinRM AllowUnencrypted) -->
         <SynchronousCommand wcm:action="add"><Order>13</Order><CommandLine>powershell -Command "Get-NetConnectionProfile | Set-NetConnectionProfile -NetworkCategory Private"</CommandLine></SynchronousCommand>
         <!-- V10: WinRM for remote management -->

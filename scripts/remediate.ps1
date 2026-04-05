@@ -41,9 +41,20 @@ bcdedit /bootems on
 Set-Service -Name TermService -StartupType Automatic
 Start-Service TermService -ErrorAction SilentlyContinue
 
-# --- EMS-SAC tools ---
-$emsCap = Get-WindowsCapability -Online | Where-Object { $_.Name -match 'EMS-SAC' -and $_.State -ne 'Installed' }
-if ($emsCap) { Add-WindowsCapability -Online -Name Windows.Desktop.EMS-SAC.Tools~~~~0.0.1.0 }
+# --- EMS-SAC tools (20min timeout; FoD download can hang) ---
+$emsCap = Get-WindowsCapability -Online -Name "Windows.Desktop.EMS-SAC.Tools~~~~0.0.1.0"
+if ($emsCap.State -ne 'Installed') {
+    Write-Output "Installing EMS-SAC Tools (timeout 20min)..."
+    $j = Start-Job { Add-WindowsCapability -Online -Name Windows.Desktop.EMS-SAC.Tools~~~~0.0.1.0 }
+    if (Wait-Job $j -Timeout 1200) {
+        Receive-Job $j | Out-Null
+        Write-Output "EMS-SAC Tools installed"
+    } else {
+        Stop-Job $j
+        Write-Output "WARNING: EMS-SAC Tools install timed out"
+    }
+    Remove-Job $j -Force
+}
 
 # --- Network profile ---
 Get-NetConnectionProfile | Set-NetConnectionProfile -NetworkCategory Private
