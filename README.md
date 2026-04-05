@@ -193,6 +193,32 @@ done
 
 Fifteen presses from +2 s through +17 s cover cold QEMU start + OVMF boot time.
 
+**5. Windows 11 24H2+ Setup (SetupHost.exe) shows two mandatory picker screens before it reads `autounattend.xml`.** Starting with 24H2, Microsoft replaced classic `setup.exe` with a new `SetupHost.exe`-based modernized installer. The very first two screens — **"Select language settings"** followed by **"Select keyboard settings"** — are drawn by the modern UI *before* `SetupHost` ever opens the unattend file, so there is nothing you can put inside `Microsoft-Windows-International-Core-WinPE` (not `InputLocale`, not `SystemLocale`, not `UILanguage`, not `SetupUILanguage`) that will skip them. They must be clicked.
+
+Both screens pre-populate with the ISO's native locale ("English (United Kingdom)" for the EN-International ISO), so accepting the defaults is fine. The Next button exposes an underlined `N` accelerator, so **`Alt+N`** activates it regardless of where keyboard focus currently is. Spray Alt+N every few seconds and bail out as soon as the disk starts growing (that's Setup reading autounattend and starting the partitioner):
+
+```bash
+for i in $(seq 1 60); do
+  sleep 3
+  echo 'sendkey alt-n' | nc -w 1 -q 1 127.0.0.1 4444
+  DISK_K=$(du -k windows-11-25h2.qcow2 | cut -f1)
+  if [ "$DISK_K" -gt 500000 ]; then
+    echo "Setup past pickers, disk=${DISK_K}K"
+    break
+  fi
+done
+```
+
+Do **not** send bare `Enter` keys during this phase: if `Enter` ever lands while keyboard focus is on the on-screen "Support" link (which happens when the key falls through from the bootmgr spray into the Setup UI) it opens a modal "Unable to open link" dialog that then swallows every subsequent Enter. `Alt+N` always targets the Next button, not the focused link.
+
+**6. Eject the install CDs from the QEMU monitor before the first post-install reboot.** Because we pin the Windows ISO to `bootindex=0` so OVMF always tries it first (required to defeat quirk #4 on the initial install), a warm reboot of the installed VM falls into an infinite BDS loop: bootmgr on the CD renders "Press any key" for 5 s, bootmgr exits via timeout, OVMF marks Boot0001 failed, then OVMF re-enters BDS and tries Boot0001 *again* instead of Boot0002 (Windows Boot Manager on the disk). Two CPUs sit pegged at 100 % executing OVMF BDS forever and SSH never comes back. Ejecting the CDs through the monitor between the "install.success" marker and `shutdown /r` removes Boot0001 from the candidate list; OVMF then picks Boot0002 on the very first BDS pass and Windows boots cleanly:
+
+```bash
+printf 'eject -f cd0\n' | nc -w 1 -q 1 127.0.0.1 4444
+printf 'eject -f cd1\n' | nc -w 1 -q 1 127.0.0.1 4444
+printf 'eject -f cd2\n' | nc -w 1 -q 1 127.0.0.1 4444
+```
+
 #### Build steps
 
 ```bash
@@ -241,6 +267,14 @@ qemu-system-x86_64 \
 for delay in 2 1 1 1 1 1 1 1 1 1 1 1 1 1 1; do
   sleep $delay
   echo 'sendkey ret' | nc -w 1 -q 1 127.0.0.1 4444
+done
+
+# 7. Click past Win11 25H2 Setup language + keyboard pickers (quirk #5)
+for i in $(seq 1 60); do
+  sleep 3
+  echo 'sendkey alt-n' | nc -w 1 -q 1 127.0.0.1 4444
+  DISK_K=$(du -k windows-11-25h2.qcow2 | cut -f1)
+  if [ "$DISK_K" -gt 500000 ]; then break; fi
 done
 ```
 
@@ -306,7 +340,7 @@ The included [`autounattend.xml`](autounattend.xml) drives the install across th
 - **International-Core**: `InputLocale=0409:00000409` only. The component must be present here for Windows 11 25H2 OOBE to skip the country / keyboard selection screens, but we deliberately do not pin `SystemLocale`/`UILanguage`/`UserLocale` so the image default wins.
 - **OOBE**: hides EULA, online account, wireless setup.
 - **User account**: local admin `cocoon` with auto-logon (password base64-encoded in XML).
-- **FirstLogonCommands**: 26 commands.
+- **FirstLogonCommands**: 27 commands.
 
 | Order  | Action                       | Notes |
 |--------|------------------------------|-------|
@@ -317,15 +351,16 @@ The included [`autounattend.xml`](autounattend.xml) drives the install across th
 | 7      | **Hibernate**                | `powercfg /h off` |
 | 8-10   | **SAC / EMS**                | `bcdedit /emssettings emsport:1 emsbaudrate:115200`, `/ems on`, `/bootems on` |
 | 11     | **TermService**              | Set to auto-start |
-| 12     | **EMS-SAC Tools**            | `Add-WindowsCapability Windows.Desktop.EMS-SAC.Tools~~~~0.0.1.0` — wrapped in `Start-Job` + `Wait-Job -Timeout 1200` so a hung FoD download from Windows Update cannot block the rest of the sequence indefinitely |
+| 12     | **EMS-SAC Tools**            | `Add-WindowsCapability Windows.Desktop.EMS-SAC.Tools~~~~0.0.1.0` — wrapped in `Start-Job` + `Wait-Job -Timeout 1200` so a hung FoD download from Windows Update cannot block the rest of the sequence indefinitely. This FoD is NotPresent on some Pro SKUs (EN-Intl ISO, ImageIndex=6 Pro) and the install can fail with no network source — base EMS/SAC serial console still works because it is built into the kernel; the FoD only adds additional admin CLI tools |
 | 13     | **Network profile**          | Set to Private (required before WinRM AllowUnencrypted) |
 | 14-17  | **WinRM**                    | Enable PS Remoting, AllowUnencrypted, Basic auth, firewall on 5985 |
 | 18     | **Hostname**                 | Force `Rename-Computer` to `COCOON-VM` (specialize ComputerName unreliable on 25H2) |
 | 19     | **virtio-win guest tools**   | Silent install `virtio-win-guest-tools.exe /S` from CD-ROM — drivers + QEMU Guest Agent + spice agent in one shot |
-| 20-22  | **ACPI power button = Shut down** | `PBUTTONACTION=3` for AC + DC power schemes |
-| 23-24  | **Shutdown optimization**    | `WaitToKillServiceTimeout=5000`, `DisableShutdownNamedPipeCheck=1` |
-| 25     | **Shutdown without logon**   | Allow remote `shutdown /s /t 0` with no user logged in |
-| 26     | **Install marker**           | `cmd /c "echo %date% %time% > C:\install.success"` |
+| 20     | **Unhide PBUTTONACTION**     | `powercfg /attributes ... -ATTRIB_HIDE` — on Win11 25H2 the physical power-button setting is hidden (Attributes=1), so every subsequent `powercfg /setacvalueindex SUB_BUTTONS PBUTTONACTION ...` silently no-ops until the setting is unhidden |
+| 21-23  | **ACPI power button = Shut down** | `PBUTTONACTION=3` for AC + DC power schemes, referenced by full GUID because the friendly alias does not resolve while the setting is hidden |
+| 24-25  | **Shutdown optimization**    | `WaitToKillServiceTimeout=5000`, `DisableShutdownNamedPipeCheck=1` |
+| 26     | **Shutdown without logon**   | Allow remote `shutdown /s /t 0` with no user logged in |
+| 27     | **Install marker**           | `cmd /c "echo %date% %time% > C:\install.success"` |
 
 ## Post-clone networking
 

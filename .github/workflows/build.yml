@@ -136,7 +136,34 @@ jobs:
             sleep $delay
             echo 'sendkey ret' | nc -w 1 -q 1 127.0.0.1 4444 >/dev/null
           done
-          echo "Keys sent"
+          echo "Enter keys sent"
+
+      - name: Click past Win11 25H2 Setup language + keyboard pickers
+        # Windows 11 24H2+ modernized Setup (SetupHost.exe) shows a mandatory
+        # "Select language settings" screen followed by "Select keyboard settings"
+        # BEFORE it reads autounattend.xml. Nothing you can put in the unattend
+        # XML skips these two screens -- not SetupUILanguage, not SystemLocale,
+        # nothing. See "Quirk #5" in README.md.
+        #
+        # Fix: blindly press Alt+N (the underlined accelerator for the Next
+        # button) every few seconds. The pickers pre-populate with the ISO's
+        # locale so "Next" accepts sane defaults. Stop once the disk starts
+        # growing -- that signals Setup has read autounattend.xml and begun
+        # partitioning / file copy.
+        run: |
+          for i in $(seq 1 60); do
+            sleep 3
+            echo 'sendkey alt-n' | nc -w 1 -q 1 127.0.0.1 4444 >/dev/null
+            DISK_K=$(du -k "$QCOW2_NAME" | cut -f1)
+            if [ "$DISK_K" -gt 500000 ]; then
+              echo "Setup past pickers (disk=${DISK_K}K at iter=$i), stopping Alt+N spray"
+              break
+            fi
+          done
+          if [ "$DISK_K" -le 500000 ]; then
+            echo "::error::Disk still ${DISK_K}K after 60 Alt+N presses, Setup did not advance"
+            exit 1
+          fi
 
       - name: Wait for install.success marker
         run: |
@@ -162,6 +189,26 @@ jobs:
           done
           echo "::error::Timed out after ${MAX_WAIT}s"
           exit 1
+
+      - name: Eject install CDs via QEMU monitor
+        # After the install finishes, the CDs MUST be ejected from the QEMU
+        # monitor before the first VM reboot. Reason: we pin the Windows ISO
+        # to bootindex=0 so OVMF always tries Boot0001 first; on the initial
+        # install that is exactly what we want (key spray defeats "Press any
+        # key to boot from CD"), but on a warm reboot Windows bootmgr still
+        # renders the prompt, still times out, and OVMF then *re-loops* on
+        # Boot0001 instead of falling through to the disk entry. Result: the
+        # VM sits forever at two pegged CPUs in OVMF BDS retrying the CD, the
+        # post-reboot `wait_for_ssh` hits its 5 min timeout and the job fails.
+        #
+        # Using `eject` + `change ... none` via the monitor removes the CDs
+        # from the boot order and OVMF picks Boot0002 (Windows Boot Manager
+        # on the virtio-blk disk) immediately on the next reboot.
+        run: |
+          printf 'eject -f cd0\n' | nc -w 1 -q 1 127.0.0.1 4444
+          printf 'eject -f cd1\n' | nc -w 1 -q 1 127.0.0.1 4444
+          printf 'eject -f cd2\n' | nc -w 1 -q 1 127.0.0.1 4444 2>/dev/null || true
+          printf 'info block\n' | nc -w 1 -q 1 127.0.0.1 4444
 
       - name: Verify and remediate
         run: |

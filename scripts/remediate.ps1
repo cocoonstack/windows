@@ -90,8 +90,13 @@ if (-not $vgt) {
 }
 
 # --- ACPI power button = Shut down ---
-powercfg /setacvalueindex SCHEME_CURRENT SUB_BUTTONS PBUTTONACTION 3
-powercfg /setdcvalueindex SCHEME_CURRENT SUB_BUTTONS PBUTTONACTION 3
+# On Win11 25H2 the PBUTTONACTION setting is hidden by default (Attributes=1),
+# so powercfg /setacvalueindex silently no-ops and verify.ps1's grep for
+# "0x00000003" in `powercfg /query ... PBUTTONACTION` output finds nothing.
+# Unhide the setting first, then set it.
+powercfg /attributes 4f971e89-eebd-4455-a8de-9e59040e7347 7648efa3-dd9c-4e3e-b566-50f929386280 -ATTRIB_HIDE
+powercfg /setacvalueindex SCHEME_CURRENT SUB_BUTTONS 7648efa3-dd9c-4e3e-b566-50f929386280 3
+powercfg /setdcvalueindex SCHEME_CURRENT SUB_BUTTONS 7648efa3-dd9c-4e3e-b566-50f929386280 3
 powercfg /setactive SCHEME_CURRENT
 
 # --- Shutdown optimization ---
