@@ -122,8 +122,10 @@ jobs:
             -chardev socket,id=chrtpm,path=/tmp/swtpm-sock \
             -tpmdev emulator,id=tpm0,chardev=chrtpm \
             -device tpm-tis,tpmdev=tpm0 \
-            -usb -device usb-tablet \
+            -device qemu-xhci,id=xhci \
+            -device usb-tablet,bus=xhci.0 \
             -display none \
+            -qmp tcp:127.0.0.1:4445,server,nowait \
             -serial file:serial.log \
             -monitor tcp:127.0.0.1:4444,server,nowait \
             -daemonize -pidfile qemu.pid
@@ -145,33 +147,43 @@ jobs:
 
       - name: Click past Win11 25H2 Setup language + keyboard pickers
         # Windows 11 24H2+ modernized Setup (SetupHost.exe) shows a mandatory
-        # "Select language settings" screen followed by "Select keyboard settings"
-        # BEFORE it reads autounattend.xml. Nothing you can put in the unattend
-        # XML skips these two screens -- not SetupUILanguage, not SystemLocale,
-        # nothing. See "Quirk #5" in README.md.
+        # "Select language settings" screen BEFORE it reads autounattend.xml.
+        # Nothing in the unattend XML skips it -- not SetupUILanguage, not
+        # SystemLocale, nothing. See "Quirk #5" in README.md.
         #
-        # Fix: blindly press Alt+N (the underlined accelerator for the Next
-        # button) every few seconds. The pickers pre-populate with the ISO's
-        # locale so "Next" accepts sane defaults. Stop once the disk starts
-        # growing -- that signals Setup has read autounattend.xml and begun
-        # partitioning / file copy.
+        # The reliable fix is a QMP absolute mouse click on the Next button.
+        # We used to rely on `sendkey alt-n` via HMP (Alt+N is the Next button
+        # accelerator), and that works on some environments, but on others
+        # Windows Setup UI silently ignores every keyboard event from the
+        # i8042 PS/2 controller after it switches to the PnP input stack,
+        # leaving Alt+N firing into a void and the spray watchdog timing out.
+        #
+        # QMP input-send-event with abs coordinates bypasses the keyboard
+        # path entirely and targets the USB tablet, which always reaches
+        # the Setup UI regardless of whether keyboard focus was grabbed.
+        #
+        # Both mechanisms run in parallel: whichever lands first advances
+        # Setup, the disk-growth watchdog (>500 MB means partitioning has
+        # started) stops the loop. The second picker ("Select keyboard
+        # settings") never shows in practice because autounattend.xml's
+        # InputLocale=0409:00000409 is applied between the two pickers.
         run: |
-          # 120 iterations x 3s = 6 min window (was 60 iterations = 3 min).
-          # GCP n2 VMs reach the second picker within ~90 s; ubuntu-latest
-          # runners may need twice that.
+          # Next button center is at (900, 635) in the 1280x800 VNC frame.
           for i in $(seq 1 120); do
             sleep 3
-            echo 'sendkey alt-n' | nc -w 1 -q 1 127.0.0.1 4444 >/dev/null
+            # Try Alt+N first (fast, HMP), then QMP mouse click. Either works.
+            echo 'sendkey alt-n' | nc -w 1 -q 1 127.0.0.1 4444 >/dev/null 2>&1
+            python3 scripts/qmp_click.py 900 635 >/dev/null 2>&1 || true
             DISK_K=$(du -k "$QCOW2_NAME" | cut -f1)
             if [ "$DISK_K" -gt 500000 ]; then
-              echo "Setup past pickers (disk=${DISK_K}K at iter=$i), stopping Alt+N spray"
+              echo "Setup past pickers (disk=${DISK_K}K at iter=$i)"
               break
             fi
           done
           if [ "$DISK_K" -le 500000 ]; then
-            echo "::error::Disk still ${DISK_K}K after 120 Alt+N presses, Setup did not advance"
-            echo 'screendump /tmp/screen.ppm' | nc -w 1 -q 1 127.0.0.1 4444 || true
-            ls -la /tmp/screen.ppm 2>/dev/null || true
+            echo "::error::Disk still ${DISK_K}K after $((120*3))s, Setup did not advance"
+            echo 'screendump screen.ppm' | nc -w 1 -q 1 127.0.0.1 4444 || true
+            ls -la screen.ppm 2>/dev/null || true
             exit 1
           fi
 

@@ -62,6 +62,8 @@ cloud-hypervisor \
 
 Login is the local admin `cocoon` account set up by `autounattend.xml`. SSH and WinRM are enabled out of the box.
 
+> **⚠ Known issue (as of 2026-04-05): rust-hypervisor-firmware cannot boot this image on Cloud Hypervisor yet.** Both the upstream `cloud-hypervisor/rust-hypervisor-firmware` **v0.5.0** release binary and the patched `cocoonstack/rust-hypervisor-firmware` `dev` build get stuck in exactly the same place — the firmware successfully enumerates PCI, mounts the EFI partition, finds `\EFI\BOOT\BOOTX64.EFI` (Windows Boot Manager), logs `[INFO] Executable loaded`, and then Windows bootmgr hangs in a single-core spin (vcpu0 ~95% CPU, vcpu1 idle, RSS frozen, no further serial output, no DHCP activity). The hang is before Windows takes over the serial console, which points at an unimplemented UEFI Boot Service that bootmgfw.efi depends on in the minimal rust UEFI environment. This is **not** specific to the cocoonstack patches. Tracking upstream; for now the qcow2 is usable under QEMU+OVMF but not under `cloud-hypervisor --kernel hypervisor-fw`. An EDK II CloudHv OVMF (real UEFI) build is the likely workaround once one is packaged.
+
 ## Building yourself
 
 Two flows share the same automation: **GitHub Actions** (`ubuntu-latest`, free tier, ~2 h, auto-publishes to GHCR) and **local** (any Linux + KVM host).
@@ -193,23 +195,27 @@ done
 
 Fifteen presses from +2 s through +17 s cover cold QEMU start + OVMF boot time.
 
-**5. Windows 11 24H2+ Setup (SetupHost.exe) shows two mandatory picker screens before it reads `autounattend.xml`.** Starting with 24H2, Microsoft replaced classic `setup.exe` with a new `SetupHost.exe`-based modernized installer. The very first two screens — **"Select language settings"** followed by **"Select keyboard settings"** — are drawn by the modern UI *before* `SetupHost` ever opens the unattend file, so there is nothing you can put inside `Microsoft-Windows-International-Core-WinPE` (not `InputLocale`, not `SystemLocale`, not `UILanguage`, not `SetupUILanguage`) that will skip them. They must be clicked.
+**5. Windows 11 24H2+ Setup (SetupHost.exe) shows a mandatory "Select language settings" picker before it reads `autounattend.xml`.** Starting with 24H2, Microsoft replaced classic `setup.exe` with a new `SetupHost.exe`-based modernized installer. The very first screen — **"Select language settings"** — is drawn by the modern UI *before* `SetupHost` ever opens the unattend file, so there is nothing you can put inside `Microsoft-Windows-International-Core-WinPE` (not `InputLocale`, not `SystemLocale`, not `UILanguage`, not `SetupUILanguage`) that will skip it. It must be clicked. The dropdowns pre-populate with the ISO's native locale ("English (United Kingdom)" for the EN-International ISO) so accepting the defaults is fine. A second "Select keyboard settings" picker would normally follow, but autounattend.xml's `InputLocale=0409:00000409` is picked up between the two pickers and the second one is auto-skipped.
 
-Both screens pre-populate with the ISO's native locale ("English (United Kingdom)" for the EN-International ISO), so accepting the defaults is fine. The Next button exposes an underlined `N` accelerator, so **`Alt+N`** activates it regardless of where keyboard focus currently is. Spray Alt+N every few seconds and bail out as soon as the disk starts growing (that's Setup reading autounattend and starting the partitioner):
+**Sending `Alt+N` via HMP `sendkey` is not reliable.** On some hosts the PnP input stack in Windows PE silently drops every scan code coming from the i8042 PS/2 controller once Setup takes focus, so every `Alt+N`/`Enter`/`Tab` fires into a void. The only mechanism that *always* works is a **QMP `input-send-event` with absolute coordinates against the USB tablet** — that bypasses the keyboard path entirely and targets the Next button by pixel. The workflow fires both in parallel every 3 s and bails out of the loop as soon as the qcow2 passes 500 MB (Setup has read autounattend and started the partitioner):
 
 ```bash
-for i in $(seq 1 60); do
+# Next button center is at (900, 635) in the 1280x800 VNC frame.
+for i in $(seq 1 120); do
   sleep 3
-  echo 'sendkey alt-n' | nc -w 1 -q 1 127.0.0.1 4444
+  echo 'sendkey alt-n' | nc -w 1 -q 1 127.0.0.1 4444 >/dev/null 2>&1
+  python3 scripts/qmp_click.py 900 635 >/dev/null 2>&1 || true
   DISK_K=$(du -k windows-11-25h2.qcow2 | cut -f1)
   if [ "$DISK_K" -gt 500000 ]; then
-    echo "Setup past pickers, disk=${DISK_K}K"
+    echo "Setup past pickers (iter=$i, disk=${DISK_K}K)"
     break
   fi
 done
 ```
 
-Do **not** send bare `Enter` keys during this phase: if `Enter` ever lands while keyboard focus is on the on-screen "Support" link (which happens when the key falls through from the bootmgr spray into the Setup UI) it opens a modal "Unable to open link" dialog that then swallows every subsequent Enter. `Alt+N` always targets the Next button, not the focused link.
+`scripts/qmp_click.py` is a ~40-line helper that talks to the QEMU QMP socket (`-qmp tcp:127.0.0.1:4445,server,nowait` on the QEMU command line) and emits absolute-pointer + left-button events. It needs a `-device qemu-xhci,id=xhci -device usb-tablet,bus=xhci.0` pair on the VM so there is an absolute pointing device to target; the xHCI variant is required because the legacy `-usb` UHCI flavour initialises too slowly and its presence breaks the bootmgfw.efi keypress window under quirk #4.
+
+Do **not** send bare `Enter` keys during this phase: if `Enter` ever lands while keyboard focus is on the on-screen "Support" link (which happens when a key from the bootmgr spray in quirk #4 falls through into the Setup UI) it opens a modal "Unable to open link" dialog that then swallows every subsequent Enter. `Alt+N` and the mouse click both target the Next button, not the focused link.
 
 **6. Eject the install CDs from the QEMU monitor before the first post-install reboot.** Because we pin the Windows ISO to `bootindex=0` so OVMF always tries it first (required to defeat quirk #4 on the initial install), a warm reboot of the installed VM falls into an infinite BDS loop: bootmgr on the CD renders "Press any key" for 5 s, bootmgr exits via timeout, OVMF marks Boot0001 failed, then OVMF re-enters BDS and tries Boot0001 *again* instead of Boot0002 (Windows Boot Manager on the disk). Two CPUs sit pegged at 100 % executing OVMF BDS forever and SSH never comes back. Ejecting the CDs through the monitor between the "install.success" marker and `shutdown /r` removes Boot0001 from the candidate list; OVMF then picks Boot0002 on the very first BDS pass and Windows boots cleanly:
 
@@ -258,9 +264,12 @@ qemu-system-x86_64 \
   -chardev socket,id=chrtpm,path=/tmp/swtpm-sock \
   -tpmdev emulator,id=tpm0,chardev=chrtpm \
   -device tpm-tis,tpmdev=tpm0 \
+  -device qemu-xhci,id=xhci \
+  -device usb-tablet,bus=xhci.0 \
   -display none \
   -serial file:serial.log \
   -monitor tcp:127.0.0.1:4444,server,nowait \
+  -qmp tcp:127.0.0.1:4445,server,nowait \
   -daemonize -pidfile qemu.pid
 
 # 6. Defeat "Press any key" (quirk #4)
@@ -269,10 +278,13 @@ for delay in 2 1 1 1 1 1 1 1 1 1 1 1 1 1 1; do
   echo 'sendkey ret' | nc -w 1 -q 1 127.0.0.1 4444
 done
 
-# 7. Click past Win11 25H2 Setup language + keyboard pickers (quirk #5)
-for i in $(seq 1 60); do
+# 7. Click past Win11 25H2 Setup language picker (quirk #5)
+# Runs both Alt+N (HMP) and QMP absolute mouse click in parallel because
+# keyboard into Setup is unreliable. Whichever lands first wins.
+for i in $(seq 1 120); do
   sleep 3
-  echo 'sendkey alt-n' | nc -w 1 -q 1 127.0.0.1 4444
+  echo 'sendkey alt-n' | nc -w 1 -q 1 127.0.0.1 4444 >/dev/null 2>&1
+  python3 scripts/qmp_click.py 900 635 >/dev/null 2>&1 || true
   DISK_K=$(du -k windows-11-25h2.qcow2 | cut -f1)
   if [ "$DISK_K" -gt 500000 ]; then break; fi
 done
