@@ -122,6 +122,7 @@ jobs:
             -chardev socket,id=chrtpm,path=/tmp/swtpm-sock \
             -tpmdev emulator,id=tpm0,chardev=chrtpm \
             -device tpm-tis,tpmdev=tpm0 \
+            -usb -device usb-tablet \
             -display none \
             -serial file:serial.log \
             -monitor tcp:127.0.0.1:4444,server,nowait \
