@@ -1,6 +1,8 @@
 # Build artifacts
 *.qcow2
+*.qcow2.part
 *.qcow2.part-*
+SHA256SUMS
 *.raw
 *.img
 *.iso

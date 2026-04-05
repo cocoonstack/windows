@@ -3,8 +3,8 @@ name: Build Windows qcow2
 on:
   workflow_dispatch:
     inputs:
-      windows_version:
-        description: "Windows version tag (used in release name)"
+      version_tag:
+        description: "OCI tag for ghcr.io/CMGS/windows"
         required: true
         default: "win11-25h2"
       disk_size:
@@ -16,39 +16,71 @@ env:
   VIRTIO_WIN_URL: "https://fedorapeople.org/groups/virt/virtio-win/direct-downloads/archive-virtio/virtio-win-0.1.285-1/virtio-win-0.1.285.iso"
   SSH_PORT: 2222
   QCOW2_NAME: "windows-11-25h2.qcow2"
+  # Windows auto-logon password from autounattend.xml (base64(UTF16LE("C@c#on160Password")))
+  WIN_PASS: "C@c#on160"
 
 jobs:
   build:
-    runs-on: self-hosted
-    timeout-minutes: 180
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    permissions:
+      contents: read
+      packages: write
     steps:
       - uses: actions/checkout@v4
 
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/share/boost /opt/ghc \
+            /usr/local/lib/android /opt/hostedtoolcache/CodeQL
+          sudo apt-get purge -y '^ghc-' '^dotnet-' '^llvm-' 'php.*' 'mysql.*' \
+            '^postgresql.*' azure-cli google-cloud-cli firefox 2>/dev/null || true
+          sudo apt-get autoremove -y
+          sudo apt-get clean
+          df -h /
+
       - name: Verify KVM
         run: |
-          test -e /dev/kvm || { echo "::error::KVM not available"; exit 1; }
+          sudo apt-get update
+          sudo apt-get install -y cpu-checker
+          sudo kvm-ok
           ls -la /dev/kvm
+          sudo chmod 666 /dev/kvm
 
       - name: Install dependencies
         run: |
-          sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             qemu-system-x86 qemu-utils \
-            ovmf swtpm mtools \
-            openssh-client sshpass jq
+            ovmf swtpm mtools genisoimage \
+            openssh-client sshpass netcat-openbsd
 
-      - name: Download virtio-win ISO
-        run: curl -fsSL -o virtio-win.iso "$VIRTIO_WIN_URL"
+      - name: Install oras
+        run: |
+          VERSION="1.2.0"
+          curl -LO "https://github.com/oras-project/oras/releases/download/v${VERSION}/oras_${VERSION}_linux_amd64.tar.gz"
+          mkdir -p oras-install
+          tar -xzf "oras_${VERSION}_linux_amd64.tar.gz" -C oras-install
+          sudo mv oras-install/oras /usr/local/bin/
+          rm -rf oras-install "oras_${VERSION}_linux_amd64.tar.gz"
+          oras version
 
       - name: Download Windows ISO
+        env:
+          WINDOWS_ISO_URL: ${{ secrets.WINDOWS_ISO_URL }}
         run: |
-          test -n "${{ secrets.WINDOWS_ISO_URL }}" || { echo "::error::WINDOWS_ISO_URL secret not set"; exit 1; }
-          curl -fsSL -o windows.iso "${{ secrets.WINDOWS_ISO_URL }}"
+          test -n "$WINDOWS_ISO_URL" || { echo "::error::WINDOWS_ISO_URL secret not set"; exit 1; }
+          curl -fsSL -o windows.iso "$WINDOWS_ISO_URL"
+          ls -lh windows.iso
+
+      - name: Download virtio-win ISO
+        run: |
+          curl -fsSL -o virtio-win.iso "$VIRTIO_WIN_URL"
+          ls -lh virtio-win.iso
 
       - name: Create disk image
         run: qemu-img create -f qcow2 "$QCOW2_NAME" "${{ inputs.disk_size }}"
 
-      - name: Prepare OVMF variables
+      - name: Prepare OVMF (Secure Boot variant)
         run: cp /usr/share/OVMF/OVMF_VARS_4M.fd OVMF_VARS.fd
 
       - name: Start TPM emulator
@@ -57,15 +89,18 @@ jobs:
           swtpm socket --tpmstate dir=/tmp/mytpm \
             --ctrl type=unixio,path=/tmp/swtpm-sock \
             --tpm2 --log level=5 &
-          sleep 1
+          sleep 2
           test -S /tmp/swtpm-sock
 
-      - name: Create autounattend floppy
+      - name: Create autounattend ISO
         run: |
-          mkfs.fat -C autounattend.img 1440
-          mcopy -i autounattend.img autounattend.xml ::/autounattend.xml
+          genisoimage -o autounattend.iso -J -r autounattend.xml
+          ls -lh autounattend.iso
 
-      - name: Install Windows
+      - name: Launch QEMU (Windows installer)
+        # Secure Boot OVMF + smm required for Win11 hardware check
+        # Explicit ide-cd on separate ide.N buses (q35 AHCI needs individual ports)
+        # -display none + -monitor tcp for headless with keypress injection
         run: |
           qemu-system-x86_64 \
             -machine q35,accel=kvm,smm=on \
@@ -74,8 +109,12 @@ jobs:
             -global driver=cfi.pflash01,property=secure,value=on \
             -drive if=pflash,format=raw,readonly=on,file=/usr/share/OVMF/OVMF_CODE_4M.secboot.fd \
             -drive if=pflash,format=raw,file=OVMF_VARS.fd \
-            -cdrom windows.iso \
-            -drive file=virtio-win.iso,index=1,media=cdrom \
+            -drive id=cd0,if=none,file=windows.iso,media=cdrom,readonly=on \
+            -device ide-cd,drive=cd0,bus=ide.0,bootindex=0 \
+            -drive id=cd1,if=none,file=virtio-win.iso,media=cdrom,readonly=on \
+            -device ide-cd,drive=cd1,bus=ide.1 \
+            -drive id=cd2,if=none,file=autounattend.iso,media=cdrom,readonly=on \
+            -device ide-cd,drive=cd2,bus=ide.2 \
             -drive if=none,id=root,file="$QCOW2_NAME",format=qcow2 \
             -device virtio-blk-pci,drive=root,disable-legacy=on \
             -device virtio-net-pci,netdev=mynet0,disable-legacy=on \
@@ -83,186 +122,156 @@ jobs:
             -chardev socket,id=chrtpm,path=/tmp/swtpm-sock \
             -tpmdev emulator,id=tpm0,chardev=chrtpm \
             -device tpm-tis,tpmdev=tpm0 \
-            -vga none -nographic \
-            -drive file=autounattend.img,format=raw,if=floppy \
+            -display none \
             -serial file:serial.log \
+            -monitor tcp:127.0.0.1:4444,server,nowait \
             -daemonize -pidfile qemu.pid
           echo "QEMU started, PID=$(cat qemu.pid)"
 
-      - name: Wait for installation to complete
+      - name: Defeat "Press any key to boot from CD" prompt
+        # Spam Enter keys 2s..17s after start so one lands in the Windows
+        # bootloader timeout window (~5s from OVMF load).
+        run: |
+          for delay in 2 1 1 1 1 1 1 1 1 1 1 1 1 1 1; do
+            sleep $delay
+            echo 'sendkey ret' | nc -w 1 -q 1 127.0.0.1 4444 >/dev/null
+          done
+          echo "Keys sent"
+
+      - name: Wait for install.success marker
         run: |
           MAX_WAIT=7200
-          INTERVAL=60
           ELAPSED=0
-
-          echo "Waiting for Windows installation to complete..."
           while [ $ELAPSED -lt $MAX_WAIT ]; do
-            sleep $INTERVAL
-            ELAPSED=$((ELAPSED + INTERVAL))
-            echo "[${ELAPSED}s] Checking SSH on port ${SSH_PORT}..."
-
-            if sshpass -p 'C@c#on160' ssh -o StrictHostKeyChecking=no \
-                -o ConnectTimeout=10 -o UserKnownHostsFile=/dev/null \
+            sleep 60
+            ELAPSED=$((ELAPSED + 60))
+            if ! kill -0 $(cat qemu.pid) 2>/dev/null; then
+              echo "::error::QEMU died"
+              tail -40 serial.log
+              exit 1
+            fi
+            DISK=$(du -sh "$QCOW2_NAME" | cut -f1)
+            if sshpass -p "$WIN_PASS" ssh -o StrictHostKeyChecking=no \
+                -o ConnectTimeout=5 -o UserKnownHostsFile=/dev/null \
                 -p "$SSH_PORT" cocoon@localhost \
                 "if exist C:\\install.success echo READY" 2>/dev/null | grep -q READY; then
-              echo "install.success detected at ${ELAPSED}s"
+              echo "install.success detected at ${ELAPSED}s (disk=${DISK})"
               exit 0
             fi
+            echo "[${ELAPSED}s] waiting... disk=${DISK}"
           done
-
-          echo "::error::Timed out waiting for installation after ${MAX_WAIT}s"
+          echo "::error::Timed out after ${MAX_WAIT}s"
           exit 1
 
       - name: Verify and remediate
         run: |
           SSH_OPTS="-o StrictHostKeyChecking=no -o ConnectTimeout=10 -o UserKnownHostsFile=/dev/null"
-
-          ssh_run() {
-            sshpass -p 'C@c#on160' ssh $SSH_OPTS -p "$SSH_PORT" cocoon@localhost "$@"
-          }
-
-          scp_to() {
-            sshpass -p 'C@c#on160' scp $SSH_OPTS -P "$SSH_PORT" "$@"
-          }
+          ssh_run() { sshpass -p "$WIN_PASS" ssh $SSH_OPTS -p "$SSH_PORT" cocoon@localhost "$@"; }
+          scp_to() { sshpass -p "$WIN_PASS" scp $SSH_OPTS -P "$SSH_PORT" "$@"; }
 
           wait_for_ssh() {
-            echo "Waiting for SSH after reboot..."
+            echo "Waiting for SSH..."
             sleep 30
             for i in $(seq 1 60); do
               if ssh_run "echo ok" 2>/dev/null | grep -q ok; then
                 echo "SSH back after ~$((30 + i * 5))s"
-                sleep 15  # let services stabilize
+                sleep 15
                 return 0
               fi
               sleep 5
             done
-            echo "::error::SSH did not come back after reboot"
             return 1
           }
 
-          reboot_vm() {
-            echo "Rebooting VM..."
-            ssh_run "shutdown /r /t 5" 2>/dev/null || true
-            wait_for_ssh
-          }
+          reboot_vm() { ssh_run "shutdown /r /t 5" 2>/dev/null || true; wait_for_ssh; }
 
-          run_verify() {
-            echo "--- Running verification ---"
-            ssh_run "powershell -ExecutionPolicy Bypass -File C:\\scripts\\verify.ps1"
-          }
-
-          run_remediate() {
-            echo "--- Running remediation ---"
-            ssh_run "powershell -ExecutionPolicy Bypass -File C:\\scripts\\remediate.ps1"
-          }
-
-          # Upload scripts
           ssh_run "mkdir C:\\scripts" 2>/dev/null || true
           scp_to scripts/verify.ps1 scripts/remediate.ps1 cocoon@localhost:"C:\\scripts\\"
 
-          # Pre-reboot verification (baseline)
           echo "=== Pre-reboot verification ==="
-          run_verify || true
+          ssh_run "powershell -ExecutionPolicy Bypass -File C:\\scripts\\verify.ps1" || true
 
-          # First reboot to test persistence
           reboot_vm
 
-          # Post-reboot verify-remediate loop
-          MAX_RETRIES=3
-          for attempt in $(seq 1 $MAX_RETRIES); do
-            echo ""
-            echo "=== Post-reboot verification (attempt $attempt/$MAX_RETRIES) ==="
-            if run_verify; then
-              echo "All checks passed after reboot!"
+          for attempt in 1 2 3; do
+            echo "=== Post-reboot verification (attempt $attempt/3) ==="
+            if ssh_run "powershell -ExecutionPolicy Bypass -File C:\\scripts\\verify.ps1"; then
+              echo "All checks passed!"
               exit 0
             fi
-
-            if [ "$attempt" -eq "$MAX_RETRIES" ]; then
-              echo "::error::Verification still failing after $MAX_RETRIES remediation attempts"
-              # Dump serial log for debugging
-              echo "--- serial.log tail ---"
-              tail -100 serial.log 2>/dev/null || true
-              exit 1
-            fi
-
-            echo "Some checks failed, remediating..."
-            run_remediate
-
+            [ "$attempt" -eq 3 ] && { echo "::error::Verify still failing"; exit 1; }
+            echo "=== Remediating ==="
+            ssh_run "powershell -ExecutionPolicy Bypass -File C:\\scripts\\remediate.ps1"
             reboot_vm
           done
 
       - name: Shut down VM
         run: |
-          sshpass -p 'C@c#on160' ssh \
+          sshpass -p "$WIN_PASS" ssh \
             -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
             -p "$SSH_PORT" cocoon@localhost \
             "shutdown /s /t 10" 2>/dev/null || true
-
           QEMU_PID=$(cat qemu.pid)
-          for i in $(seq 1 60); do
-            kill -0 "$QEMU_PID" 2>/dev/null || { echo "VM shut down after ${i}s"; break; }
+          for i in $(seq 1 90); do
+            kill -0 "$QEMU_PID" 2>/dev/null || { echo "VM down after ${i}s"; break; }
             sleep 1
           done
+          kill -0 "$QEMU_PID" 2>/dev/null && { kill -9 "$QEMU_PID"; sleep 2; }
 
-          kill -0 "$QEMU_PID" 2>/dev/null && { echo "Force killing QEMU"; kill -9 "$QEMU_PID"; sleep 2; }
+      - name: Free disk before compression
+        run: |
+          rm -f windows.iso virtio-win.iso autounattend.iso
+          df -h /
 
       - name: Compress qcow2
         run: |
-          echo "Original size: $(du -sh "$QCOW2_NAME" | cut -f1)"
-          qemu-img convert -O qcow2 -c "$QCOW2_NAME" "${QCOW2_NAME%.qcow2}-compressed.qcow2"
-          mv "${QCOW2_NAME%.qcow2}-compressed.qcow2" "$QCOW2_NAME"
-          echo "Compressed size: $(du -sh "$QCOW2_NAME" | cut -f1)"
+          echo "Original: $(du -sh $QCOW2_NAME | cut -f1)"
+          qemu-img convert -O qcow2 -c "$QCOW2_NAME" "${QCOW2_NAME}.compressed"
+          mv "${QCOW2_NAME}.compressed" "$QCOW2_NAME"
+          echo "Compressed: $(du -sh $QCOW2_NAME | cut -f1)"
 
-      - name: Split image and generate checksums
+      - name: Split qcow2 into OCI blob chunks
+        # ~1.9 GiB per chunk to stay well under any GHCR blob limit
         run: |
-          # Split into sub-2GiB parts for GitHub Releases
-          split -b 1900M -d --additional-suffix=.part "$QCOW2_NAME" "${QCOW2_NAME}."
+          split -b 1900M -d --additional-suffix=.qcow2.part "$QCOW2_NAME" "${QCOW2_NAME}."
           rm "$QCOW2_NAME"
-
-          # Generate checksums
-          sha256sum *.part > SHA256SUMS
+          ls -lh "${QCOW2_NAME}."*
+          sha256sum "${QCOW2_NAME}."* > SHA256SUMS
           cat SHA256SUMS
 
-          # Generate manifest
-          cat > manifest.json <<MANIFEST
-          {
-          "version": "${{ inputs.windows_version }}",
-          "created": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
-          "original_name": "$QCOW2_NAME",
-          "disk_size": "${{ inputs.disk_size }}",
-          "parts": $(ls -1 *.part | jq -R . | jq -s .),
-          "reassemble": "cat ${QCOW2_NAME}.*.part > ${QCOW2_NAME}"
-          }
-          MANIFEST
-
-      - name: Create GitHub Release
+      - name: Push to GHCR via ORAS
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          TAG="${{ inputs.windows_version }}-$(date +%Y%m%d)"
-          gh release create "$TAG" \
-            --title "Windows Image ${{ inputs.windows_version }}" \
-            --notes "$(cat <<'NOTES'
-## Windows 11 25H2 qcow2 image
+          echo "$GITHUB_TOKEN" | oras login ghcr.io -u "${{ github.actor }}" --password-stdin
 
-### Reassemble
-```bash
-# Download all .part files, then:
-cat windows-11-25h2.qcow2.*.part > windows-11-25h2.qcow2
-sha256sum -c SHA256SUMS
-```
+          REPO_LC=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
+          TAG="${{ inputs.version_tag }}-$(date -u +%Y%m%d)"
+          REF="ghcr.io/${REPO_LC}:${TAG}"
 
-### Verify
-```bash
-qemu-img info windows-11-25h2.qcow2
-```
-NOTES
-)" \
-            *.part SHA256SUMS manifest.json
+          # Assemble --file arguments for each part with media type
+          ARGS=()
+          for part in "${QCOW2_NAME}."*; do
+            ARGS+=("${part}:application/vnd.cocoonstack.windows.disk.qcow2.part")
+          done
+          ARGS+=("SHA256SUMS:text/plain")
+
+          oras push "$REF" \
+            --artifact-type "application/vnd.cocoonstack.windows-image.v1+json" \
+            --annotation "org.opencontainers.image.source=https://github.com/${{ github.repository }}" \
+            --annotation "org.opencontainers.image.revision=${{ github.sha }}" \
+            --annotation "org.opencontainers.image.description=Windows 11 25H2 qcow2, split parts" \
+            --annotation "cocoonstack.windows.reassemble=cat ${QCOW2_NAME}.*.qcow2.part > ${QCOW2_NAME}" \
+            "${ARGS[@]}"
+
+          # Also push "latest" tag for the version family
+          oras tag "$REF" "${{ inputs.version_tag }}"
+
+          echo "Pushed: $REF"
+          echo "Pushed: ghcr.io/${REPO_LC}:${{ inputs.version_tag }}"
 
       - name: Cleanup
         if: always()
         run: |
           kill $(cat qemu.pid 2>/dev/null) 2>/dev/null || true
           sudo rm -rf /tmp/mytpm
-          rm -f windows.iso virtio-win.iso OVMF_VARS.fd autounattend.img qemu.pid
