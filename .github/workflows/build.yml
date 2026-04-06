@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       version_tag:
-        description: "OCI tag for ghcr.io/CMGS/windows"
+        description: "OCI tag for ghcr.io/cocoonstack/windows"
         required: true
         default: "win11-25h2"
       disk_size:
@@ -22,7 +22,7 @@ env:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 350
+    timeout-minutes: 180
     permissions:
       contents: read
       packages: write
