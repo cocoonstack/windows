@@ -51,6 +51,9 @@ Get-NetConnectionProfile | Set-NetConnectionProfile -NetworkCategory Private
 # --- WinRM ---
 Write-Output "Configuring WinRM..."
 Enable-PSRemoting -Force -SkipNetworkProfileCheck 2>$null
+# Enable-PSRemoting sets WinRM to Delayed Start; override to plain Automatic
+# so the service is available immediately after reboot.
+sc.exe config WinRM start= auto | Out-Null
 Set-Item WSMan:\localhost\Service\AllowUnencrypted -Value True
 Set-Item WSMan:\localhost\Service\Auth\Basic -Value True
 $rule = Get-NetFirewallRule -Name winrm -ErrorAction SilentlyContinue

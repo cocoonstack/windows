@@ -94,6 +94,7 @@ wait_for_firstboot_settle() {
   local timeout_s=$2
   local log_file="$ARTIFACT_DIR/${phase}-firstboot-state.log"
   local waited=0
+  local stale_count=0
 
   : >"$log_file"
 
@@ -126,6 +127,23 @@ wait_for_firstboot_settle() {
       log "$phase settle: sacdrv=${sacdrv_present:-?} sacsess=${sacsess_present:-?} registered=${sacdrv_registered:-?} servicing=${servicing_count:-?}"
       if [[ "$sacdrv_present" == "True" && "$sacsess_present" == "True" && "$sacdrv_registered" == "True" && "$servicing_count" == "0" ]]; then
         return 0
+      fi
+
+      # FoD may be Staged/InstallPending — needs a reboot to finalize.
+      # If servicing is done but SAC files are still absent after several
+      # consecutive probes, trigger a guest reboot and keep waiting.
+      if [[ "$servicing_count" == "0" && "$sacdrv_present" != "True" ]]; then
+        stale_count=$((stale_count + 1))
+        if (( stale_count >= 3 )); then
+          log "$phase settle: SAC absent after servicing done, rebooting to finalize FoD"
+          ssh_run "shutdown /r /t 5 /f" >/dev/null 2>&1 || true
+          sleep 30
+          wait_for_ssh "$REBOOT_SSH_WAIT_TRIES" "$phase FoD-finalize SSH"
+          sleep 15
+          stale_count=0
+        fi
+      else
+        stale_count=0
       fi
     else
       log "$phase settle probe failed (rc=$rc), retrying"

@@ -8,14 +8,13 @@
     </component>
     <component name="Microsoft-Windows-PnpCustomizationsWinPE" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
       <DriverPaths>
-        <!-- attestation drivers: Win11/amd64/{driver} structure -->
+        <!-- virtio-win ISO: try both attestation and standard layout, on D: and E: -->
         <PathAndCredentials wcm:action="add" wcm:keyValue="1"><Path>D:\Win11\amd64\viostor</Path></PathAndCredentials>
         <PathAndCredentials wcm:action="add" wcm:keyValue="2"><Path>E:\Win11\amd64\viostor</Path></PathAndCredentials>
         <PathAndCredentials wcm:action="add" wcm:keyValue="3"><Path>D:\Win11\amd64\NetKvm</Path></PathAndCredentials>
         <PathAndCredentials wcm:action="add" wcm:keyValue="4"><Path>E:\Win11\amd64\NetKvm</Path></PathAndCredentials>
         <PathAndCredentials wcm:action="add" wcm:keyValue="5"><Path>D:\Win11\amd64\Balloon</Path></PathAndCredentials>
         <PathAndCredentials wcm:action="add" wcm:keyValue="6"><Path>E:\Win11\amd64\Balloon</Path></PathAndCredentials>
-        <!-- fallback: standard virtio-win ISO paths -->
         <PathAndCredentials wcm:action="add" wcm:keyValue="7"><Path>D:\viostor\w11\amd64</Path></PathAndCredentials>
         <PathAndCredentials wcm:action="add" wcm:keyValue="8"><Path>E:\viostor\w11\amd64</Path></PathAndCredentials>
         <PathAndCredentials wcm:action="add" wcm:keyValue="9"><Path>D:\NetKVM\w11\amd64</Path></PathAndCredentials>
@@ -42,6 +41,7 @@
       <UserData><AcceptEula>true</AcceptEula><ProductKey><Key>VK7JG-NPHTM-C97JM-9MPGT-3V66T</Key><WillShowUI>OnError</WillShowUI></ProductKey></UserData>
     </component>
   </settings>
+
   <settings pass="specialize">
     <component name="Microsoft-Windows-Deployment" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
       <RunSynchronous>
@@ -55,8 +55,8 @@
       <InputLocale>0409:00000409</InputLocale>
     </component>
   </settings>
+
   <settings pass="oobeSystem">
-    <!-- V11: Force US keyboard in oobeSystem; locale untouched so image default is used -->
     <component name="Microsoft-Windows-International-Core" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
       <InputLocale>0409:00000409</InputLocale>
     </component>
@@ -65,46 +65,61 @@
       <UserAccounts><LocalAccounts><LocalAccount wcm:action="add"><Name>cocoon</Name><Group>Administrators</Group><Password><Value>QwBAAGMAIwBvAG4AMQA2ADAAUABhAHMAcwB3AG8AcgBkAA==</Value><PlainText>false</PlainText></Password></LocalAccount></LocalAccounts></UserAccounts>
       <AutoLogon><Enabled>true</Enabled><Username>cocoon</Username><Password><Value>QwBAAGMAIwBvAG4AMQA2ADAAUABhAHMAcwB3AG8AcgBkAA==</Value><PlainText>false</PlainText></Password><LogonCount>9999</LogonCount></AutoLogon>
       <FirstLogonCommands>
-        <SynchronousCommand wcm:action="add"><Order>1</Order><CommandLine>powershell -Command "Set-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server' -Name fDenyTSConnections -Value 0"</CommandLine></SynchronousCommand>
-        <SynchronousCommand wcm:action="add"><Order>2</Order><CommandLine>powershell -Command "Enable-NetFirewallRule -DisplayGroup 'Remote Desktop'"</CommandLine></SynchronousCommand>
-        <SynchronousCommand wcm:action="add"><Order>3</Order><CommandLine>powershell -Command "Add-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.1.0; Start-Service sshd; Set-Service -Name sshd -StartupType Automatic"</CommandLine></SynchronousCommand>
-        <SynchronousCommand wcm:action="add"><Order>4</Order><CommandLine>powershell -Command "New-NetFirewallRule -Name sshd -DisplayName 'OpenSSH Server' -Enabled True -Direction Inbound -Protocol TCP -Action Allow -LocalPort 22"</CommandLine></SynchronousCommand>
-        <SynchronousCommand wcm:action="add"><Order>5</Order><CommandLine>netsh advfirewall firewall add rule name="Allow ICMPv4" protocol=icmpv4:8,any dir=in action=allow</CommandLine></SynchronousCommand>
-        <SynchronousCommand wcm:action="add"><Order>6</Order><CommandLine>netsh advfirewall set allprofiles state off</CommandLine></SynchronousCommand>
-        <SynchronousCommand wcm:action="add"><Order>7</Order><CommandLine>powercfg /h off</CommandLine></SynchronousCommand>
-        <SynchronousCommand wcm:action="add"><Order>8</Order><CommandLine>bcdedit /emssettings emsport:1 emsbaudrate:115200</CommandLine></SynchronousCommand>
-        <SynchronousCommand wcm:action="add"><Order>9</Order><CommandLine>bcdedit /ems on</CommandLine></SynchronousCommand>
-        <SynchronousCommand wcm:action="add"><Order>10</Order><CommandLine>bcdedit /bootems on</CommandLine></SynchronousCommand>
-        <SynchronousCommand wcm:action="add"><Order>11</Order><CommandLine>sc config TermService start=auto</CommandLine></SynchronousCommand>
-        <!-- V13: True SAC on Win11 client requires the EMS-SAC FoD; bcdedit flags alone are not enough. -->
-        <SynchronousCommand wcm:action="add"><Order>12</Order><CommandLine>powershell -Command "$cap = Get-WindowsCapability -Online -Name Windows.Desktop.EMS-SAC.Tools~~~~0.0.1.0; if ($cap.State -ne 'Installed') { Add-WindowsCapability -Online -Name Windows.Desktop.EMS-SAC.Tools~~~~0.0.1.0 }"</CommandLine></SynchronousCommand>
-        <!-- V10: Set network Private (required before WinRM AllowUnencrypted) -->
-        <SynchronousCommand wcm:action="add"><Order>13</Order><CommandLine>powershell -Command "Get-NetConnectionProfile | Set-NetConnectionProfile -NetworkCategory Private"</CommandLine></SynchronousCommand>
-        <!-- V10: WinRM for remote management -->
-        <SynchronousCommand wcm:action="add"><Order>14</Order><CommandLine>powershell -Command "Enable-PSRemoting -Force -SkipNetworkProfileCheck"</CommandLine></SynchronousCommand>
-        <SynchronousCommand wcm:action="add"><Order>15</Order><CommandLine>powershell -Command "Set-Item WSMan:\localhost\Service\AllowUnencrypted -Value True"</CommandLine></SynchronousCommand>
-        <SynchronousCommand wcm:action="add"><Order>16</Order><CommandLine>powershell -Command "Set-Item WSMan:\localhost\Service\Auth\Basic -Value True"</CommandLine></SynchronousCommand>
-        <SynchronousCommand wcm:action="add"><Order>17</Order><CommandLine>powershell -Command "New-NetFirewallRule -Name winrm -DisplayName 'WinRM HTTP' -Enabled True -Direction Inbound -Protocol TCP -Action Allow -LocalPort 5985"</CommandLine></SynchronousCommand>
-        <!-- V10: Force hostname (specialize ComputerName unreliable on 25H2) -->
-        <SynchronousCommand wcm:action="add"><Order>18</Order><CommandLine>powershell -Command "Rename-Computer -NewName 'COCOON-VM' -Force"</CommandLine></SynchronousCommand>
-        <!-- V10: Silent install virtio-win guest tools (drivers + QEMU Guest Agent + spice agent) -->
-        <SynchronousCommand wcm:action="add"><Order>19</Order><CommandLine>cmd /c "if exist D:\virtio-win-guest-tools.exe (D:\virtio-win-guest-tools.exe /S) else if exist E:\virtio-win-guest-tools.exe (E:\virtio-win-guest-tools.exe /S)"</CommandLine></SynchronousCommand>
-        <!-- V12: Set ACPI power button action to "Shut down" (default is Sleep/Do nothing).
-             On Win11 25H2 the PBUTTONACTION setting is hidden by default (Attributes=1),
-             so powercfg /setacvalueindex silently no-ops when using the friendly alias.
-             Fix: unhide it first, then reference by full GUID (the alias resolver also
-             fails for hidden settings). -->
-        <SynchronousCommand wcm:action="add"><Order>20</Order><CommandLine>powercfg /attributes 4f971e89-eebd-4455-a8de-9e59040e7347 7648efa3-dd9c-4e3e-b566-50f929386280 -ATTRIB_HIDE</CommandLine></SynchronousCommand>
-        <SynchronousCommand wcm:action="add"><Order>21</Order><CommandLine>powercfg /setacvalueindex SCHEME_CURRENT SUB_BUTTONS 7648efa3-dd9c-4e3e-b566-50f929386280 3</CommandLine></SynchronousCommand>
-        <SynchronousCommand wcm:action="add"><Order>22</Order><CommandLine>powercfg /setdcvalueindex SCHEME_CURRENT SUB_BUTTONS 7648efa3-dd9c-4e3e-b566-50f929386280 3</CommandLine></SynchronousCommand>
-        <SynchronousCommand wcm:action="add"><Order>23</Order><CommandLine>powercfg /setactive SCHEME_CURRENT</CommandLine></SynchronousCommand>
-        <!-- V10: Speed up shutdown via SSH/WinRM -->
-        <SynchronousCommand wcm:action="add"><Order>24</Order><CommandLine>reg add "HKLM\SYSTEM\CurrentControlSet\Control" /v WaitToKillServiceTimeout /t REG_SZ /d 5000 /f</CommandLine></SynchronousCommand>
-        <SynchronousCommand wcm:action="add"><Order>25</Order><CommandLine>reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System" /v DisableShutdownNamedPipeCheck /t REG_DWORD /d 1 /f</CommandLine></SynchronousCommand>
-        <!-- V10: Allow shutdown without logged-on user (required for SSH/WinRM remote shutdown) -->
-        <SynchronousCommand wcm:action="add"><Order>26</Order><CommandLine>reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System" /v shutdownwithoutlogon /t REG_DWORD /d 1 /f</CommandLine></SynchronousCommand>
-        <!-- V10: Mark FirstLogonCommands completion -->
-        <SynchronousCommand wcm:action="add"><Order>27</Order><CommandLine>cmd /c "echo %date% %time% > C:\install.success"</CommandLine></SynchronousCommand>
+        <!-- Disable QuickEdit so VNC mouse events cannot freeze the console during install -->
+        <SynchronousCommand wcm:action="add"><Order>1</Order><CommandLine>reg add "HKCU\Console" /v QuickEdit /t REG_DWORD /d 0 /f</CommandLine></SynchronousCommand>
+
+        <!-- RDP -->
+        <SynchronousCommand wcm:action="add"><Order>2</Order><CommandLine>powershell -Command "Set-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server' -Name fDenyTSConnections -Value 0"</CommandLine></SynchronousCommand>
+        <SynchronousCommand wcm:action="add"><Order>3</Order><CommandLine>powershell -Command "Enable-NetFirewallRule -DisplayGroup 'Remote Desktop'"</CommandLine></SynchronousCommand>
+
+        <!-- SSH (FoD via WU) -->
+        <SynchronousCommand wcm:action="add"><Order>4</Order><CommandLine>powershell -Command "Add-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.1.0 | Out-Null; Start-Service sshd; Set-Service -Name sshd -StartupType Automatic"</CommandLine></SynchronousCommand>
+        <SynchronousCommand wcm:action="add"><Order>5</Order><CommandLine>powershell -Command "New-NetFirewallRule -Name sshd -DisplayName 'OpenSSH Server' -Enabled True -Direction Inbound -Protocol TCP -Action Allow -LocalPort 22"</CommandLine></SynchronousCommand>
+
+        <!-- Firewall / ICMP -->
+        <SynchronousCommand wcm:action="add"><Order>6</Order><CommandLine>netsh advfirewall firewall add rule name="Allow ICMPv4" protocol=icmpv4:8,any dir=in action=allow</CommandLine></SynchronousCommand>
+        <SynchronousCommand wcm:action="add"><Order>7</Order><CommandLine>netsh advfirewall set allprofiles state off</CommandLine></SynchronousCommand>
+
+        <!-- Power / hibernate -->
+        <SynchronousCommand wcm:action="add"><Order>8</Order><CommandLine>powercfg /h off</CommandLine></SynchronousCommand>
+
+        <!-- EMS boot flags -->
+        <SynchronousCommand wcm:action="add"><Order>9</Order><CommandLine>bcdedit /emssettings emsport:1 emsbaudrate:115200</CommandLine></SynchronousCommand>
+        <SynchronousCommand wcm:action="add"><Order>10</Order><CommandLine>bcdedit /ems on</CommandLine></SynchronousCommand>
+        <SynchronousCommand wcm:action="add"><Order>11</Order><CommandLine>bcdedit /bootems on</CommandLine></SynchronousCommand>
+        <SynchronousCommand wcm:action="add"><Order>12</Order><CommandLine>sc config TermService start=auto</CommandLine></SynchronousCommand>
+
+        <!-- EMS-SAC FoD (required for real SAC on Win11 client; bcdedit alone is not enough) -->
+        <SynchronousCommand wcm:action="add"><Order>13</Order><CommandLine>powershell -Command "$cap = Get-WindowsCapability -Online -Name Windows.Desktop.EMS-SAC.Tools~~~~0.0.1.0; if ($cap.State -ne 'Installed') { Add-WindowsCapability -Online -Name Windows.Desktop.EMS-SAC.Tools~~~~0.0.1.0 | Out-Null }"</CommandLine></SynchronousCommand>
+
+        <!-- WinRM (Enable-PSRemoting sets Delayed Start; override to plain Automatic) -->
+        <SynchronousCommand wcm:action="add"><Order>14</Order><CommandLine>powershell -Command "Get-NetConnectionProfile | Set-NetConnectionProfile -NetworkCategory Private"</CommandLine></SynchronousCommand>
+        <SynchronousCommand wcm:action="add"><Order>15</Order><CommandLine>powershell -Command "Enable-PSRemoting -Force -SkipNetworkProfileCheck"</CommandLine></SynchronousCommand>
+        <SynchronousCommand wcm:action="add"><Order>16</Order><CommandLine>sc.exe config WinRM start= auto</CommandLine></SynchronousCommand>
+        <SynchronousCommand wcm:action="add"><Order>17</Order><CommandLine>powershell -Command "Set-Item WSMan:\localhost\Service\AllowUnencrypted -Value True"</CommandLine></SynchronousCommand>
+        <SynchronousCommand wcm:action="add"><Order>18</Order><CommandLine>powershell -Command "Set-Item WSMan:\localhost\Service\Auth\Basic -Value True"</CommandLine></SynchronousCommand>
+        <SynchronousCommand wcm:action="add"><Order>19</Order><CommandLine>powershell -Command "New-NetFirewallRule -Name winrm -DisplayName 'WinRM HTTP' -Enabled True -Direction Inbound -Protocol TCP -Action Allow -LocalPort 5985"</CommandLine></SynchronousCommand>
+
+        <!-- Hostname (specialize ComputerName unreliable on 25H2) -->
+        <SynchronousCommand wcm:action="add"><Order>20</Order><CommandLine>powershell -Command "Rename-Computer -NewName 'COCOON-VM' -Force"</CommandLine></SynchronousCommand>
+
+        <!-- virtio-win guest tools -->
+        <SynchronousCommand wcm:action="add"><Order>21</Order><CommandLine>cmd /c "if exist D:\virtio-win-guest-tools.exe (D:\virtio-win-guest-tools.exe /S) else if exist E:\virtio-win-guest-tools.exe (E:\virtio-win-guest-tools.exe /S)"</CommandLine></SynchronousCommand>
+
+        <!-- ACPI power button = Shut down (unhide first, then set by GUID) -->
+        <SynchronousCommand wcm:action="add"><Order>22</Order><CommandLine>powercfg /attributes 4f971e89-eebd-4455-a8de-9e59040e7347 7648efa3-dd9c-4e3e-b566-50f929386280 -ATTRIB_HIDE</CommandLine></SynchronousCommand>
+        <SynchronousCommand wcm:action="add"><Order>23</Order><CommandLine>powercfg /setacvalueindex SCHEME_CURRENT SUB_BUTTONS 7648efa3-dd9c-4e3e-b566-50f929386280 3</CommandLine></SynchronousCommand>
+        <SynchronousCommand wcm:action="add"><Order>24</Order><CommandLine>powercfg /setdcvalueindex SCHEME_CURRENT SUB_BUTTONS 7648efa3-dd9c-4e3e-b566-50f929386280 3</CommandLine></SynchronousCommand>
+        <SynchronousCommand wcm:action="add"><Order>25</Order><CommandLine>powercfg /setactive SCHEME_CURRENT</CommandLine></SynchronousCommand>
+
+        <!-- Shutdown optimization -->
+        <SynchronousCommand wcm:action="add"><Order>26</Order><CommandLine>reg add "HKLM\SYSTEM\CurrentControlSet\Control" /v WaitToKillServiceTimeout /t REG_SZ /d 5000 /f</CommandLine></SynchronousCommand>
+        <SynchronousCommand wcm:action="add"><Order>27</Order><CommandLine>reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System" /v DisableShutdownNamedPipeCheck /t REG_DWORD /d 1 /f</CommandLine></SynchronousCommand>
+        <SynchronousCommand wcm:action="add"><Order>28</Order><CommandLine>reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System" /v shutdownwithoutlogon /t REG_DWORD /d 1 /f</CommandLine></SynchronousCommand>
+
+        <!-- Restore QuickEdit and mark completion -->
+        <SynchronousCommand wcm:action="add"><Order>29</Order><CommandLine>reg add "HKCU\Console" /v QuickEdit /t REG_DWORD /d 1 /f</CommandLine></SynchronousCommand>
+        <SynchronousCommand wcm:action="add"><Order>30</Order><CommandLine>cmd /c "echo %date% %time% > C:\install.success"</CommandLine></SynchronousCommand>
       </FirstLogonCommands>
     </component>
   </settings>
