@@ -164,8 +164,11 @@ scp_to_guest "$ROOT_DIR/scripts/verify.ps1" "$ROOT_DIR/scripts/remediate.ps1"
 
 log "waiting for SSH"
 wait_for_ssh
-ssh_run_timeout "$SSH_COMMAND_TIMEOUT" "powershell -NoProfile -ExecutionPolicy Bypass -File C:\\scripts\\verify.ps1 -RequireSerialDevice" \
+ssh_run_timeout "$SSH_COMMAND_TIMEOUT" "powershell -NoProfile -ExecutionPolicy Bypass -File C:\\scripts\\verify.ps1" \
   | tee "$ARTIFACT_DIR/ch-guest-verify.log"
+
+log "probing SAC on COM1"
+python3 "$ROOT_DIR/scripts/sac_probe.py" "$SERIAL_SOCKET" | tee "$ARTIFACT_DIR/sac-probe.log"
 
 log "starting local RDP forward on the remote host"
 socat TCP-LISTEN:3389,bind=127.0.0.1,reuseaddr,fork TCP:"$GUEST_IP":3389 \
@@ -174,9 +177,6 @@ SOCAT_PID=$!
 
 log "verifying RDP auth"
 wait_for_rdp
-
-log "probing SAC on COM1"
-python3 "$ROOT_DIR/scripts/sac_probe.py" "$SERIAL_SOCKET" | tee "$ARTIFACT_DIR/sac-probe.log"
 
 log "requesting clean shutdown over SSH"
 ssh_run "shutdown /s /t 10" >/dev/null 2>&1 || true

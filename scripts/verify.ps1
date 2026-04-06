@@ -8,6 +8,7 @@ param(
 $ErrorActionPreference = "SilentlyContinue"
 $failed = 0
 $total = 0
+$warnings = 0
 
 function Check([string]$name, [bool]$result) {
     $script:total++
@@ -17,6 +18,11 @@ function Check([string]$name, [bool]$result) {
         Write-Output "FAIL  $name"
         $script:failed++
     }
+}
+
+function Warn([string]$message) {
+    $script:warnings++
+    Write-Output "WARN  $message"
 }
 
 # --- Services ---
@@ -71,9 +77,14 @@ $serialDev = Get-CimInstance Win32_PnPEntity | Where-Object {
     $_.PNPDeviceID -like 'ACPI\\PNP0501*' -and $_.Present
 }
 if ($RequireSerialDevice) {
-    Check "COM1 PNP0501 present" ($null -ne $serialDev)
+    Write-Output "INFO  RequireSerialDevice is advisory; use sac_probe.py for the authoritative CH serial check"
+}
+
+if ($null -ne $serialDev) {
+    Write-Output "INFO  COM1 PNP0501 present = True"
 } else {
-    Write-Output "INFO  COM1 PNP0501 present = $($null -ne $serialDev)"
+    Warn "COM1 PNP0501 present = False"
+    Write-Output "INFO  Live SAC prompt detection is the authoritative CH serial signal"
 }
 
 # --- Firewall ---
@@ -116,6 +127,10 @@ Check "C:\install.success exists" (Test-Path C:\install.success)
 
 # --- Summary ---
 Write-Output ""
-Write-Output "$($script:total - $script:failed)/$($script:total) checks passed"
+if ($script:warnings -gt 0) {
+    Write-Output "$($script:total - $script:failed)/$($script:total) checks passed, $($script:warnings) warning(s)"
+} else {
+    Write-Output "$($script:total - $script:failed)/$($script:total) checks passed"
+}
 
 if ($script:failed -gt 0) { exit 1 } else { exit 0 }

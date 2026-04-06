@@ -20,7 +20,7 @@ An image produced from this repo is only considered valid for Cocoon if all of t
 - It boots on `cloud-hypervisor` with `CLOUDHV.fd`.
 - It acquires a DHCP lease from a plain `dnsmasq` bridge and reports hostname `COCOON-VM`.
 - `3389/tcp` accepts a real RDP authentication attempt.
-- `COM1` exposes a real SAC console after Cloud Hypervisor boot. `bcdedit /ems on` by itself is **not** sufficient.
+- `COM1` exposes a real SAC console after Cloud Hypervisor boot. A live `SAC>` prompt is the hard requirement; missing in-guest `ACPI\\PNP0501` enumeration is only a warning. `bcdedit /ems on` by itself is **not** sufficient.
 - A remote `shutdown /s /t 10` cleanly terminates the Cloud Hypervisor process.
 
 ## Pulling a pre-built image
@@ -107,11 +107,18 @@ Two flows share the same automation: **GitHub Actions** (`ubuntu-latest`, free t
 If you want the supported path with the same checks Cocoon cares about, use the repo scripts directly:
 
 ```bash
+QEMU_CPU_COUNT=16 QEMU_MEMORY=32G \
 WINDOWS_ISO_URL='<signed Microsoft ISO URL>' ./scripts/build-qemu.sh
 
+CH_CPU_COUNT=8 CH_MEMORY_SIZE=16G \
 QCOW2_PATH="$(cat work/qemu-build/artifacts/qcow2.path)" \
   ./scripts/verify-ch.sh
 ```
+
+CPU and memory overrides are optional. The defaults stay at `4` vCPU and `8G`
+for both scripts, and you can raise them with `QEMU_CPU_COUNT`,
+`QEMU_MEMORY`, `CH_CPU_COUNT`, and `CH_MEMORY_SIZE` when the host has spare
+capacity.
 
 `build-qemu.sh` keeps exactly one rolling screenshot at
 `work/qemu-build/artifacts/qemu-progress.png`; it overwrites the same file during
@@ -166,6 +173,10 @@ gh workflow run build.yml --repo CMGS/windows -f version_tag=win11-25h2
 Requires one repository secret:
 
 - `WINDOWS_ISO_URL` — signed download URL for the Windows 11 25H2 ISO. Microsoft licensing prohibits bundling the ISO in the repo or any artifact, so fetch it at build time.
+
+The workflow still only asks for `version_tag` and `disk_size`; it uses the
+script defaults for guest CPU and memory because those overrides are not exposed
+as workflow inputs.
 
 The workflow:
 
@@ -430,7 +441,7 @@ For Windows 11 25H2 client SKUs, a true SAC console requires both parts:
 Checking only `bcdedit /enum` is a false positive. The supported validation path in this repo is:
 
 - `scripts/firstboot-state.ps1` to wait for the concrete runtime pieces that the FoD drops: `sacdrv.sys`, `sacsess.exe`, `sacdrv` service registration, and no active servicing process
-- `scripts/verify.ps1` for in-guest prerequisites: EMS boot flags, `sacdrv.sys`, `sacsess.exe`, `sacdrv` registration, and `ACPI\\PNP0501` when serial hardware is required
+- `scripts/verify.ps1` for in-guest prerequisites: EMS boot flags, `sacdrv.sys`, `sacsess.exe`, `sacdrv` registration, and advisory `ACPI\\PNP0501` visibility
 - `scripts/sac_probe.py` against the Cloud Hypervisor serial socket, to prove that `COM1` actually responds as SAC after boot
 
 If the serial socket only shows firmware boot logs and never returns SAC tokens after `CR/LF` and `?`, the image does **not** meet Cocoon's Windows console requirement.
