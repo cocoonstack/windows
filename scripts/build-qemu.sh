@@ -12,6 +12,8 @@ DISK_SIZE=${DISK_SIZE:-40G}
 SSH_PORT=${SSH_PORT:-2222}
 MONITOR_PORT=${MONITOR_PORT:-4444}
 QMP_PORT=${QMP_PORT:-4445}
+QEMU_CPU_COUNT=${QEMU_CPU_COUNT:-4}
+QEMU_MEMORY=${QEMU_MEMORY:-8G}
 SSH_COMMAND_TIMEOUT=${SSH_COMMAND_TIMEOUT:-300}
 REBOOT_SSH_WAIT_TRIES=${REBOOT_SSH_WAIT_TRIES:-120}
 FIRSTBOOT_SETTLE_TIMEOUT=${FIRSTBOOT_SETTLE_TIMEOUT:-1800}
@@ -239,10 +241,11 @@ sleep 2
 test -S "$WORKDIR/swtpm.sock"
 
 log "launching QEMU installer"
+log "QEMU resources: cpus=$QEMU_CPU_COUNT memory=$QEMU_MEMORY"
 qemu-system-x86_64 \
   -machine q35,accel=kvm,smm=on \
   -cpu host,hv_relaxed,hv_spinlocks=0x1fff,hv_vapic,hv_time \
-  -m 8G -smp 4 \
+  -m "$QEMU_MEMORY" -smp "$QEMU_CPU_COUNT" \
   -global driver=cfi.pflash01,property=secure,value=on \
   -drive if=pflash,format=raw,readonly=on,file=/usr/share/OVMF/OVMF_CODE_4M.secboot.fd \
   -drive if=pflash,format=raw,file="$WORKDIR/OVMF_VARS.fd" \

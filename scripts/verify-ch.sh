@@ -9,6 +9,8 @@ WIN_PASS=${WIN_PASS:-"C@c#on160"}
 CLOUD_HYPERVISOR_BIN=${CLOUD_HYPERVISOR_BIN:-/usr/local/bin/cloud-hypervisor}
 FIRMWARE_PATH=${FIRMWARE_PATH:-/usr/local/share/cloud-hypervisor/CLOUDHV.fd}
 SSH_COMMAND_TIMEOUT=${SSH_COMMAND_TIMEOUT:-300}
+CH_CPU_COUNT=${CH_CPU_COUNT:-4}
+CH_MEMORY_SIZE=${CH_MEMORY_SIZE:-8G}
 BRIDGE_NAME=${BRIDGE_NAME:-br-ch}
 TAP_NAME=${TAP_NAME:-tap-ch}
 SUBNET_CIDR=${SUBNET_CIDR:-192.168.100.1/24}
@@ -123,13 +125,14 @@ DNSMASQ_PID=$!
 sleep 2
 
 log "launching Cloud Hypervisor"
+log "Cloud Hypervisor resources: cpus=$CH_CPU_COUNT memory=$CH_MEMORY_SIZE"
 "$CLOUD_HYPERVISOR_BIN" \
   --api-socket "$API_SOCKET" \
   --log-file "$CH_LOG" \
   --firmware "$FIRMWARE_PATH" \
   --disk path="$QCOW2_PATH",image_type=qcow2,backing_files=on \
-  --cpus boot=4,kvm_hyperv=on \
-  --memory size=8G \
+  --cpus boot="$CH_CPU_COUNT",kvm_hyperv=on \
+  --memory size="$CH_MEMORY_SIZE" \
   --net tap="$TAP_NAME",mac="$GUEST_MAC" \
   --rng src=/dev/urandom \
   --serial socket="$SERIAL_SOCKET" \
@@ -151,7 +154,7 @@ if [[ -z "${GUEST_IP}" ]]; then
 fi
 
 log "guest DHCP lease: $GUEST_IP"
-grep -q "DHCPACK.*COCOON-VM" "$DNSMASQ_LOG"
+sudo grep -q "DHCPACK.*COCOON-VM" "$DNSMASQ_LOG"
 
 ping -c 4 "$GUEST_IP" | tee "$ARTIFACT_DIR/ping.log"
 
