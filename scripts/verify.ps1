@@ -1,6 +1,10 @@
 # verify.ps1 - Verify Windows VM post-install configuration
 # Exit 0 if all checks pass, 1 if any fail
 
+param(
+    [switch]$RequireSerialDevice
+)
+
 $ErrorActionPreference = "SilentlyContinue"
 $failed = 0
 $total = 0
@@ -50,6 +54,27 @@ Check "WinRM port 5985" ($winrmConn.TcpTestSucceeded)
 $bcd = bcdedit /enum 2>&1 | Out-String
 Check "EMS enabled"      ($bcd -match "ems\s+Yes")
 Check "Boot EMS enabled" ($bcd -match "bootems\s+Yes")
+
+Check "sacdrv.sys present" (Test-Path "$env:windir\System32\drivers\sacdrv.sys")
+Check "sacsess.exe present" (Test-Path "$env:windir\System32\sacsess.exe")
+
+$sacQc = sc.exe qc sacdrv 2>&1 | Out-String
+Check "sacdrv registered" ($LASTEXITCODE -eq 0 -and $sacQc -match "SERVICE_NAME:\s+sacdrv")
+
+$serialSvc = Get-Service Serial
+Check "Serial service present" ($null -ne $serialSvc)
+if ($null -ne $serialSvc) {
+    Check "Serial service startup set" ($serialSvc.StartType -ne "Disabled")
+}
+
+$serialDev = Get-CimInstance Win32_PnPEntity | Where-Object {
+    $_.PNPDeviceID -like 'ACPI\\PNP0501*' -and $_.Present
+}
+if ($RequireSerialDevice) {
+    Check "COM1 PNP0501 present" ($null -ne $serialDev)
+} else {
+    Write-Output "INFO  COM1 PNP0501 present = $($null -ne $serialDev)"
+}
 
 # --- Firewall ---
 $fwOn = (Get-NetFirewallProfile | Where-Object { $_.Enabled -eq $true }).Count

@@ -18,6 +18,7 @@ autounattend.img
 *.sock
 
 # Local work dirs
+artifacts/
 dist/
 out/
 output/

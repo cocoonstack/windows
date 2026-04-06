@@ -1,12 +1,27 @@
 # Windows VM Image
 
 Build automation for Windows 11 25H2 disk images targeting Cloud Hypervisor.
+The design goal is that a fresh Linux host can build and validate a Cocoon-compatible
+Windows image using this repository alone plus a Windows ISO download URL.
 
 Contents:
 
 - `autounattend.xml` — unattended Windows setup configuration
-- `scripts/verify.ps1` + `scripts/remediate.ps1` — post-install verification / remediation loop
+- `scripts/build-qemu.sh` — reproducible local QEMU build, with one rolling screenshot file and a bounded first-boot settle loop
+- `scripts/verify.ps1` + `scripts/remediate.ps1` — in-guest verification / remediation loop
+- `scripts/firstboot-state.ps1` — lightweight first-boot probe used to wait for concrete SAC runtime components before verification
+- `scripts/verify-ch.sh` + `scripts/sac_probe.py` — Cloud Hypervisor runtime validation for DHCP, RDP, real SAC, and clean shutdown
 - `.github/workflows/build.yml` — headless QEMU/KVM build on `ubuntu-latest`, publishes to GHCR via ORAS
+
+## Acceptance Criteria
+
+An image produced from this repo is only considered valid for Cocoon if all of these are true:
+
+- It boots on `cloud-hypervisor` with `CLOUDHV.fd`.
+- It acquires a DHCP lease from a plain `dnsmasq` bridge and reports hostname `COCOON-VM`.
+- `3389/tcp` accepts a real RDP authentication attempt.
+- `COM1` exposes a real SAC console after Cloud Hypervisor boot. `bcdedit /ems on` by itself is **not** sufficient.
+- A remote `shutdown /s /t 10` cleanly terminates the Cloud Hypervisor process.
 
 ## Pulling a pre-built image
 
@@ -87,6 +102,26 @@ Then launch `cloud-hypervisor --net tap=tap-ch,...` as above. After ~40 seconds 
 
 Two flows share the same automation: **GitHub Actions** (`ubuntu-latest`, free tier, ~2 h, auto-publishes to GHCR) and **local** (any Linux + KVM host).
 
+### Recommended local flow
+
+If you want the supported path with the same checks Cocoon cares about, use the repo scripts directly:
+
+```bash
+WINDOWS_ISO_URL='<signed Microsoft ISO URL>' ./scripts/build-qemu.sh
+
+QCOW2_PATH="$(cat work/qemu-build/artifacts/qcow2.path)" \
+  ./scripts/verify-ch.sh
+```
+
+`build-qemu.sh` keeps exactly one rolling screenshot at
+`work/qemu-build/artifacts/qemu-progress.png`; it overwrites the same file during
+install instead of generating numbered screenshots. After the planned first reboot,
+it waits for `sacdrv.sys`, `sacsess.exe`, and `sacdrv` service registration to
+appear with no active `dism` / `TiWorker` process before it runs `verify.ps1`.
+That reboot can take well over 10 minutes while Windows finalizes servicing, so the
+script intentionally gives SSH a long recovery window instead of treating a black
+screen as an immediate failure.
+
 ### Version requirements
 
 | Component        | Version      | Notes                                                                        |
@@ -138,7 +173,7 @@ The workflow:
 2. Repacks the Windows ISO with `autounattend.xml` injected at the ISO root and `efisys_noprompt.bin` as the EFI boot image (see "Why we repack" below)
 3. Boots QEMU with Secure Boot OVMF + swtpm TPM 2.0 and the repacked ISO attached
 4. Polls SSH for the `C:\install.success` marker (with a stall-detect + QMP `system_reset` fallback if the Phase 1 → Phase 2 reboot hangs)
-5. Reboots the VM once so pending updates install during the reboot, then runs `verify.ps1`, and applies `remediate.ps1` on failure (up to 3 attempts)
+5. Reboots the VM once, waits for `firstboot-state.ps1` to report concrete SAC runtime readiness, then runs `verify.ps1` and applies `remediate.ps1` on failure (up to 3 attempts)
 6. Shuts the VM down cleanly, compresses the qcow2, splits it, and pushes to GHCR via ORAS
 
 ### Why we repack the ISO
@@ -177,7 +212,8 @@ xorriso -as mkisofs \
 sudo apt-get install -y \
   qemu-system-x86 qemu-utils \
   ovmf swtpm mtools xorriso \
-  openssh-client sshpass netcat-openbsd
+  openssh-client sshpass netcat-openbsd \
+  imagemagick dnsmasq socat freerdp2-x11
 ```
 
 Plus a Windows 11 25H2 ISO and [virtio-win-0.1.285.iso](https://fedorapeople.org/groups/virt/virtio-win/direct-downloads/archive-virtio/virtio-win-0.1.285-1/).
@@ -352,7 +388,7 @@ The included [`autounattend.xml`](autounattend.xml) drives the install across th
 - **International-Core**: `InputLocale=0409:00000409` only. The component must be present here for Windows 11 25H2 OOBE to skip the country / keyboard selection screens.
 - **OOBE**: hides EULA, online account, wireless setup.
 - **User account**: local admin `cocoon` with auto-logon (password base64-encoded in XML).
-- **FirstLogonCommands**: 26 commands.
+- **FirstLogonCommands**: 27 commands.
 
 | Order  | Action                       | Notes |
 |--------|------------------------------|-------|
@@ -361,17 +397,18 @@ The included [`autounattend.xml`](autounattend.xml) drives the install across th
 | 5      | **ICMP**                     | Allow ping |
 | 6      | **Firewall**                 | Disable all profiles (dev/test environment) |
 | 7      | **Hibernate**                | `powercfg /h off` |
-| 8-10   | **SAC / EMS**                | `bcdedit /emssettings emsport:1 emsbaudrate:115200`, `/ems on`, `/bootems on` — enables the in-kernel SAC serial console (no FoD needed; the `Windows.Desktop.EMS-SAC.Tools` capability only adds optional extra admin CLI tools and is NotPresent on EN-Intl Pro SKU, so we don't bother installing it) |
+| 8-10   | **EMS boot flags**           | `bcdedit /emssettings emsport:1 emsbaudrate:115200`, `/ems on`, `/bootems on` |
 | 11     | **TermService**              | Set to auto-start |
-| 12     | **Network profile**          | Set to Private (required before WinRM AllowUnencrypted) |
-| 13-16  | **WinRM**                    | Enable PS Remoting, AllowUnencrypted, Basic auth, firewall on 5985 |
-| 17     | **Hostname**                 | Force `Rename-Computer` to `COCOON-VM` (specialize ComputerName unreliable on 25H2) |
-| 18     | **virtio-win guest tools**   | Silent install `virtio-win-guest-tools.exe /S` from CD-ROM — drivers + QEMU Guest Agent + spice agent in one shot |
-| 19     | **Unhide PBUTTONACTION**     | `powercfg /attributes ... -ATTRIB_HIDE` — see quirk #5 |
-| 20-22  | **ACPI power button = Shut down** | `PBUTTONACTION=3` for AC + DC power schemes, referenced by full GUID |
-| 23-24  | **Shutdown optimization**    | `WaitToKillServiceTimeout=5000`, `DisableShutdownNamedPipeCheck=1` |
-| 25     | **Shutdown without logon**   | Allow remote `shutdown /s /t 0` with no user logged in |
-| 26     | **Install marker**           | `cmd /c "echo %date% %time% > C:\install.success"` |
+| 12     | **EMS-SAC FoD**              | Install `Windows.Desktop.EMS-SAC.Tools~~~~0.0.1.0` — required for a real SAC console on Win11 client |
+| 13     | **Network profile**          | Set to Private (required before WinRM AllowUnencrypted) |
+| 14-17  | **WinRM**                    | Enable PS Remoting, AllowUnencrypted, Basic auth, firewall on 5985 |
+| 18     | **Hostname**                 | Force `Rename-Computer` to `COCOON-VM` (specialize ComputerName unreliable on 25H2) |
+| 19     | **virtio-win guest tools**   | Silent install `virtio-win-guest-tools.exe /S` from CD-ROM — drivers + QEMU Guest Agent + spice agent in one shot |
+| 20     | **Unhide PBUTTONACTION**     | `powercfg /attributes ... -ATTRIB_HIDE` — see quirk #5 |
+| 21-23  | **ACPI power button = Shut down** | `PBUTTONACTION=3` for AC + DC power schemes, referenced by full GUID |
+| 24-25  | **Shutdown optimization**    | `WaitToKillServiceTimeout=5000`, `DisableShutdownNamedPipeCheck=1` |
+| 26     | **Shutdown without logon**   | Allow remote `shutdown /s /t 0` with no user logged in |
+| 27     | **Install marker**           | `cmd /c "echo %date% %time% > C:\install.success"` |
 
 > **Note on WinRM persistence**: `Enable-PSRemoting` + the `AllowUnencrypted`/`Basic` WSMan settings set by orders 14-16 do not always survive the very first post-install reboot on Win11 25H2. `remediate.ps1` re-applies them from the same deterministic settings, and the CI loop reboots → verifies → remediates → re-verifies to make the final image idempotent.
 
@@ -385,9 +422,18 @@ The included [`autounattend.xml`](autounattend.xml) drives the install across th
 
 ## On-Cloud-Hypervisor serial console
 
-The autounattend enables EMS/SAC via `bcdedit` (orders 8-10). On QEMU+OVMF the resulting `COM1` serial console works via `-serial file:` or `-serial socket:` and you can reach SAC through the socket.
+For Windows 11 25H2 client SKUs, a true SAC console requires both parts:
 
-On Cloud Hypervisor + `rust-hypervisor-firmware`, the serial path is currently **boot-only**: the firmware's own log is emitted to `--serial socket=...` up through `Executable loaded`, but `rust-hypervisor-firmware` does not advertise an ISA 16550 UART to the guest via ACPI, so Windows never enumerates a COM port and SAC cannot take over the serial channel after boot. All in-guest management should go through SSH (port 22) or WinRM (port 5985) instead of SAC; both are enabled by the autounattend and validated by `verify.ps1`.
+- The EMS boot flags in BCD (`/emssettings`, `/ems on`, `/bootems on`)
+- The `Windows.Desktop.EMS-SAC.Tools~~~~0.0.1.0` FoD installed in the guest
+
+Checking only `bcdedit /enum` is a false positive. The supported validation path in this repo is:
+
+- `scripts/firstboot-state.ps1` to wait for the concrete runtime pieces that the FoD drops: `sacdrv.sys`, `sacsess.exe`, `sacdrv` service registration, and no active servicing process
+- `scripts/verify.ps1` for in-guest prerequisites: EMS boot flags, `sacdrv.sys`, `sacsess.exe`, `sacdrv` registration, and `ACPI\\PNP0501` when serial hardware is required
+- `scripts/sac_probe.py` against the Cloud Hypervisor serial socket, to prove that `COM1` actually responds as SAC after boot
+
+If the serial socket only shows firmware boot logs and never returns SAC tokens after `CR/LF` and `?`, the image does **not** meet Cocoon's Windows console requirement.
 
 ## Licensing
 

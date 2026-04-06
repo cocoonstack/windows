@@ -52,7 +52,8 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             qemu-system-x86 qemu-utils \
             ovmf swtpm mtools xorriso \
-            openssh-client sshpass netcat-openbsd
+            openssh-client sshpass netcat-openbsd \
+            imagemagick
 
       - name: Install oras
         run: |
@@ -64,267 +65,48 @@ jobs:
           rm -rf oras-install "oras_${VERSION}_linux_amd64.tar.gz"
           oras version
 
-      - name: Download Windows ISO
+      - name: Build qcow2 with repo script
         env:
           WINDOWS_ISO_URL: ${{ secrets.WINDOWS_ISO_URL }}
         run: |
           test -n "$WINDOWS_ISO_URL" || { echo "::error::WINDOWS_ISO_URL secret not set"; exit 1; }
-          curl -fsSL -o windows-orig.iso "$WINDOWS_ISO_URL"
-          ls -lh windows-orig.iso
+          chmod +x scripts/build-qemu.sh
+          WORKDIR="$GITHUB_WORKSPACE/work/qemu-build" \
+          ARTIFACT_DIR="$GITHUB_WORKSPACE/artifacts/qemu-build" \
+          WINDOWS_ISO_URL="$WINDOWS_ISO_URL" \
+          VIRTIO_WIN_URL="$VIRTIO_WIN_URL" \
+          DISK_SIZE="${{ inputs.disk_size }}" \
+          QCOW2_NAME="$QCOW2_NAME" \
+          ./scripts/build-qemu.sh
 
-      - name: Download virtio-win ISO
-        run: |
-          curl -fsSL -o virtio-win.iso "$VIRTIO_WIN_URL"
-          ls -lh virtio-win.iso
-
-      - name: Repack Windows ISO with autounattend.xml at root
-        # Two things happen here, both critical for a zero-interaction build:
-        #
-        # 1. Inject autounattend.xml at the ISO root. SetupHost on Win11 24H2+
-        #    only skips the "Select language settings" / "Select keyboard
-        #    settings" pickers if it finds autounattend.xml on the *install
-        #    media itself* -- autounattend delivered on a separate removable
-        #    medium (second CD, floppy, etc.) is picked up too late, after
-        #    the modernized UI has already rendered the pickers.
-        #
-        # 2. Use efi/microsoft/boot/efisys_noprompt.bin as the EFI boot
-        #    image instead of the default efisys.bin. Both files ship on
-        #    every Windows ISO; the "noprompt" variant skips the "Press any
-        #    key to boot from CD" prompt that bootmgfw.efi otherwise renders
-        #    on every UEFI CD boot, so there is nothing to key-spray.
-        #
-        # install.wim is 7+ GiB so xorriso is required (legacy mkisofs caps
-        # at 4 GiB files). -iso-level 3 enables large-file support.
-        run: |
-          mkdir -p iso_src
-          sudo mount -o loop,ro windows-orig.iso /mnt
-          cp -a /mnt/. iso_src/
-          sudo umount /mnt
-          chmod -R u+w iso_src
-          cp autounattend.xml iso_src/autounattend.xml
-          xorriso -as mkisofs \
-            -iso-level 3 \
-            -J -joliet-long -R \
-            -V "WIN11_25H2_UA" \
-            -b boot/etfsboot.com -no-emul-boot -boot-load-size 8 -boot-info-table \
-            -eltorito-alt-boot \
-            -e efi/microsoft/boot/efisys_noprompt.bin -no-emul-boot \
-            -o windows.iso \
-            iso_src/
-          rm -rf iso_src windows-orig.iso
-          ls -lh windows.iso
-
-      - name: Create disk image
-        run: qemu-img create -f qcow2 "$QCOW2_NAME" "${{ inputs.disk_size }}"
-
-      - name: Prepare OVMF (Secure Boot variant)
-        run: cp /usr/share/OVMF/OVMF_VARS_4M.fd OVMF_VARS.fd
-
-      - name: Start TPM emulator
-        run: |
-          mkdir -p /tmp/mytpm
-          swtpm socket --tpmstate dir=/tmp/mytpm \
-            --ctrl type=unixio,path=/tmp/swtpm-sock \
-            --tpm2 --log level=5 &
-          sleep 2
-          test -S /tmp/swtpm-sock
-
-      - name: Launch QEMU (Windows installer)
-        # With autounattend.xml embedded in the install ISO at the root and
-        # booted via efisys_noprompt.bin, there is nothing to key-spray and
-        # no picker to click past -- Setup starts automatically, reads the
-        # unattend file immediately, and proceeds straight to partitioning.
-        #
-        # No `bootindex=` on any device: OVMF's default boot order (disk
-        # first, then removable CDs) handles both phases correctly. On the
-        # first boot the disk is empty so OVMF falls through to the Windows
-        # ISO; once Setup writes Windows Boot Manager to the ESP and records
-        # an NVRAM entry, subsequent reboots land on the disk automatically.
-        # Hard-pinning CD to bootindex=0 caused an infinite reinstall loop
-        # because the pin overrode Windows' own boot order changes.
-        #
-        # `-device ide-cd` on explicit ide.N buses is needed on q35 because
-        # each ide.N supports only one unit and OVMF refuses to enumerate
-        # CDs landed on the wrong port by `-cdrom` shorthand.
-        run: |
-          qemu-system-x86_64 \
-            -machine q35,accel=kvm,smm=on \
-            -cpu host,hv_relaxed,hv_spinlocks=0x1fff,hv_vapic,hv_time \
-            -m 8G -smp 4 \
-            -global driver=cfi.pflash01,property=secure,value=on \
-            -drive if=pflash,format=raw,readonly=on,file=/usr/share/OVMF/OVMF_CODE_4M.secboot.fd \
-            -drive if=pflash,format=raw,file=OVMF_VARS.fd \
-            -drive id=cd0,if=none,file=windows.iso,media=cdrom,readonly=on \
-            -device ide-cd,drive=cd0,bus=ide.0 \
-            -drive id=cd1,if=none,file=virtio-win.iso,media=cdrom,readonly=on \
-            -device ide-cd,drive=cd1,bus=ide.1 \
-            -drive if=none,id=root,file="$QCOW2_NAME",format=qcow2 \
-            -device virtio-blk-pci,drive=root,disable-legacy=on \
-            -device virtio-net-pci,netdev=mynet0,disable-legacy=on \
-            -netdev user,id=mynet0,hostfwd=tcp::${SSH_PORT}-:22 \
-            -chardev socket,id=chrtpm,path=/tmp/swtpm-sock \
-            -tpmdev emulator,id=tpm0,chardev=chrtpm \
-            -device tpm-tis,tpmdev=tpm0 \
-            -device qemu-xhci,id=xhci \
-            -device usb-tablet,bus=xhci.0 \
-            -display none \
-            -qmp tcp:127.0.0.1:4445,server,nowait \
-            -serial file:serial.log \
-            -monitor tcp:127.0.0.1:4444,server,nowait \
-            -daemonize -pidfile qemu.pid
-          echo "QEMU started, PID=$(cat qemu.pid)"
-
-      - name: Wait for install.success marker
-        # Setup goes through several phases:
-        #   1. WinPE image apply (disk grows 0 -> ~11 GiB)
-        #   2. Reboot into installed Windows
-        #   3. Specialize pass
-        #   4. Reboot
-        #   5. OOBE + FirstLogonCommands (SSH install, virtio-win tools,
-        #      WinRM, hostname, shutdown tweaks)
-        #   6. C:\install.success written by the last FirstLogonCommand
-        #
-        # Stall guard: if disk has been >5 GiB and hasn't grown in 20 min,
-        # issue a QMP system_reset. Windows Setup occasionally stalls at
-        # the Phase 1 -> Phase 2 reboot on QEMU/OVMF when the guest's
-        # UEFI reset path hangs before returning to BDS; a host-issued
-        # reset kicks BDS into re-reading NVRAM, finding the newly-written
-        # Windows Boot Manager entry, and booting Phase 2 from disk.
-        run: |
-          MAX_WAIT=7200
-          ELAPSED=0
-          LAST_DISK=0
-          STALL_START=0
-          while [ $ELAPSED -lt $MAX_WAIT ]; do
-            sleep 60
-            ELAPSED=$((ELAPSED + 60))
-            if ! kill -0 $(cat qemu.pid) 2>/dev/null; then
-              echo "::error::QEMU died"
-              tail -40 serial.log
-              exit 1
-            fi
-            DISK_K=$(du -k "$QCOW2_NAME" | cut -f1)
-            DISK_H=$(du -sh "$QCOW2_NAME" | cut -f1)
-            FOUND=""
-            for try in 1 2 3; do
-              if sshpass -p "$WIN_PASS" ssh -o StrictHostKeyChecking=no \
-                  -o ConnectTimeout=30 -o ServerAliveInterval=10 \
-                  -o UserKnownHostsFile=/dev/null \
-                  -p "$SSH_PORT" cocoon@localhost \
-                  "if exist C:\\install.success echo READY" 2>/dev/null | grep -q READY; then
-                FOUND=1
-                break
-              fi
-              sleep 2
-            done
-            if [ -n "$FOUND" ]; then
-              echo "install.success detected at ${ELAPSED}s (disk=${DISK_H})"
-              exit 0
-            fi
-            # Stall detection
-            if [ "$DISK_K" -gt 5242880 ] && [ "$DISK_K" -eq "$LAST_DISK" ]; then
-              if [ "$STALL_START" -eq 0 ]; then STALL_START=$ELAPSED; fi
-              STALL=$((ELAPSED - STALL_START))
-              echo "[${ELAPSED}s] disk=${DISK_H} stalled for ${STALL}s"
-              if [ "$STALL" -ge 1200 ]; then
-                echo "[${ELAPSED}s] stall > 20 min, issuing QMP system_reset"
-                python3 -c "
-          import socket, json, time
-          s = socket.socket(); s.connect(('127.0.0.1', 4445))
-          s.recv(4096)
-          s.sendall(b'{\"execute\":\"qmp_capabilities\"}\n'); time.sleep(0.3); s.recv(4096)
-          s.sendall(b'{\"execute\":\"system_reset\"}\n'); time.sleep(0.3); print(s.recv(4096))
-          s.close()"
-                STALL_START=0
-              fi
-            else
-              STALL_START=0
-            fi
-            LAST_DISK=$DISK_K
-            echo "[${ELAPSED}s] waiting... disk=${DISK_H}"
-          done
-          echo "::error::Timed out after ${MAX_WAIT}s"
-          exit 1
-
-      - name: Verify and remediate
-        run: |
-          SSH_OPTS="-o StrictHostKeyChecking=no -o ConnectTimeout=10 -o UserKnownHostsFile=/dev/null"
-          ssh_run() { sshpass -p "$WIN_PASS" ssh $SSH_OPTS -p "$SSH_PORT" cocoon@localhost "$@"; }
-          scp_to() { sshpass -p "$WIN_PASS" scp $SSH_OPTS -P "$SSH_PORT" "$@"; }
-
-          wait_for_ssh() {
-            echo "Waiting for SSH..."
-            sleep 30
-            for i in $(seq 1 60); do
-              if ssh_run "echo ok" 2>/dev/null | grep -q ok; then
-                echo "SSH back after ~$((30 + i * 5))s"
-                sleep 15
-                return 0
-              fi
-              sleep 5
-            done
-            return 1
-          }
-
-          reboot_vm() { ssh_run "shutdown /r /t 5" 2>/dev/null || true; wait_for_ssh; }
-
-          ssh_run "if not exist C:\\scripts mkdir C:\\scripts" 2>/dev/null || true
-          scp_to scripts/verify.ps1 scripts/remediate.ps1 cocoon@localhost:"C:/scripts/"
-
-          echo "=== Pre-reboot verification ==="
-          ssh_run "powershell -ExecutionPolicy Bypass -File C:\\scripts\\verify.ps1" || true
-
-          # User-reported requirement: reboot once before shutdown so pending
-          # updates install during the reboot. WinRM service settings do not
-          # persist through the first post-install reboot (known Windows
-          # quirk with Enable-PSRemoting during OOBE); remediate.ps1 restores
-          # them. After this loop the image is clean and ready for shutdown.
-          reboot_vm
-
-          for attempt in 1 2 3; do
-            echo "=== Post-reboot verification (attempt $attempt/3) ==="
-            if ssh_run "powershell -ExecutionPolicy Bypass -File C:\\scripts\\verify.ps1"; then
-              echo "All checks passed!"
-              exit 0
-            fi
-            [ "$attempt" -eq 3 ] && { echo "::error::Verify still failing"; exit 1; }
-            echo "=== Remediating ==="
-            ssh_run "powershell -ExecutionPolicy Bypass -File C:\\scripts\\remediate.ps1"
-            reboot_vm
-          done
-
-      - name: Shut down VM
-        run: |
-          sshpass -p "$WIN_PASS" ssh \
-            -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-            -p "$SSH_PORT" cocoon@localhost \
-            "shutdown /s /t 10" 2>/dev/null || true
-          QEMU_PID=$(cat qemu.pid)
-          for i in $(seq 1 90); do
-            kill -0 "$QEMU_PID" 2>/dev/null || { echo "VM down after ${i}s"; break; }
-            sleep 1
-          done
-          kill -0 "$QEMU_PID" 2>/dev/null && { kill -9 "$QEMU_PID"; sleep 2; }
+          QCOW2_PATH="$(cat "$GITHUB_WORKSPACE/artifacts/qemu-build/qcow2.path")"
+          echo "QCOW2_PATH=$QCOW2_PATH" >> "$GITHUB_ENV"
+          echo "QCOW2_DIR=$(dirname "$QCOW2_PATH")" >> "$GITHUB_ENV"
+          echo "QCOW2_BASENAME=$(basename "$QCOW2_PATH")" >> "$GITHUB_ENV"
 
       - name: Free disk before compression
         run: |
-          rm -f windows.iso virtio-win.iso
+          rm -f \
+            "$GITHUB_WORKSPACE/work/qemu-build/windows.iso" \
+            "$GITHUB_WORKSPACE/work/qemu-build/windows-orig.iso" \
+            "$GITHUB_WORKSPACE/work/qemu-build/virtio-win.iso"
           df -h /
 
       - name: Compress qcow2
         run: |
-          echo "Original: $(du -sh $QCOW2_NAME | cut -f1)"
-          qemu-img convert -O qcow2 -c "$QCOW2_NAME" "${QCOW2_NAME}.compressed"
-          mv "${QCOW2_NAME}.compressed" "$QCOW2_NAME"
-          echo "Compressed: $(du -sh $QCOW2_NAME | cut -f1)"
+          echo "Original: $(du -sh "$QCOW2_PATH" | cut -f1)"
+          qemu-img convert -O qcow2 -c "$QCOW2_PATH" "${QCOW2_PATH}.compressed"
+          mv "${QCOW2_PATH}.compressed" "$QCOW2_PATH"
+          echo "Compressed: $(du -sh "$QCOW2_PATH" | cut -f1)"
 
       - name: Split qcow2 into OCI blob chunks
         # ~1.9 GiB per chunk to stay well under any GHCR blob limit
         run: |
-          split -b 1900M -d --additional-suffix=.qcow2.part "$QCOW2_NAME" "${QCOW2_NAME}."
-          rm "$QCOW2_NAME"
-          ls -lh "${QCOW2_NAME}."*
-          sha256sum "${QCOW2_NAME}."* > SHA256SUMS
+          cd "$QCOW2_DIR"
+          split -b 1900M -d --additional-suffix=.qcow2.part "$QCOW2_BASENAME" "${QCOW2_BASENAME}."
+          rm "$QCOW2_BASENAME"
+          ls -lh "${QCOW2_BASENAME}."*
+          sha256sum "${QCOW2_BASENAME}."* > SHA256SUMS
           cat SHA256SUMS
 
       - name: Push to GHCR via ORAS
@@ -336,10 +118,11 @@ jobs:
           REPO_LC=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
           TAG="${{ inputs.version_tag }}-$(date -u +%Y%m%d)"
           REF="ghcr.io/${REPO_LC}:${TAG}"
+          cd "$QCOW2_DIR"
 
           # Assemble --file arguments for each part with media type
           ARGS=()
-          for part in "${QCOW2_NAME}."*; do
+          for part in "${QCOW2_BASENAME}."*; do
             ARGS+=("${part}:application/vnd.cocoonstack.windows.disk.qcow2.part")
           done
           ARGS+=("SHA256SUMS:text/plain")
@@ -349,7 +132,7 @@ jobs:
             --annotation "org.opencontainers.image.source=https://github.com/${{ github.repository }}" \
             --annotation "org.opencontainers.image.revision=${{ github.sha }}" \
             --annotation "org.opencontainers.image.description=Windows 11 25H2 qcow2, split parts" \
-            --annotation "cocoonstack.windows.reassemble=cat ${QCOW2_NAME}.*.qcow2.part > ${QCOW2_NAME}" \
+            --annotation "cocoonstack.windows.reassemble=cat ${QCOW2_BASENAME}.*.qcow2.part > ${QCOW2_BASENAME}" \
             "${ARGS[@]}"
 
           # Also push "latest" tag for the version family
@@ -357,17 +140,6 @@ jobs:
 
           echo "Pushed: $REF"
           echo "Pushed: ghcr.io/${REPO_LC}:${{ inputs.version_tag }}"
-
-      - name: Capture diagnostic screenshot
-        if: always()
-        run: |
-          if [ -f qemu.pid ] && kill -0 "$(cat qemu.pid)" 2>/dev/null; then
-            echo 'screendump screen.ppm' | nc -w 1 -q 1 127.0.0.1 4444 || true
-            if [ -f screen.ppm ]; then
-              sudo apt-get install -y -qq imagemagick 2>/dev/null || true
-              convert screen.ppm screen.png 2>/dev/null || true
-            fi
-          fi
 
       - name: Upload debug artifacts
         if: always()
@@ -377,12 +149,9 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
           path: |
-            serial.log
-            screen.png
-            screen.ppm
+            artifacts/qemu-build/**
 
       - name: Cleanup
         if: always()
         run: |
-          kill $(cat qemu.pid 2>/dev/null) 2>/dev/null || true
-          sudo rm -rf /tmp/mytpm
+          sudo rm -rf "$GITHUB_WORKSPACE/work" "$GITHUB_WORKSPACE/artifacts"

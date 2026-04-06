@@ -36,6 +36,10 @@ Write-Output "Configuring SAC/EMS..."
 bcdedit /emssettings emsport:1 emsbaudrate:115200
 bcdedit /ems on
 bcdedit /bootems on
+$emsCap = Get-WindowsCapability -Online -Name Windows.Desktop.EMS-SAC.Tools~~~~0.0.1.0
+if ($emsCap.State -ne "Installed") {
+    Add-WindowsCapability -Online -Name Windows.Desktop.EMS-SAC.Tools~~~~0.0.1.0
+}
 
 # --- TermService ---
 Set-Service -Name TermService -StartupType Automatic
