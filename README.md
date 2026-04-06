@@ -28,15 +28,15 @@ An image produced from this repo is only considered valid for Cocoon if all of t
 Built images are published as OCI artifacts to GHCR:
 
 ```
-ghcr.io/cmgs/windows:win11-25h2              # moving alias, latest good build
-ghcr.io/cmgs/windows:win11-25h2-<YYYYMMDD>   # dated immutable tag
+ghcr.io/cocoonstack/windows:win11-25h2              # moving alias, latest good build
+ghcr.io/cocoonstack/windows:win11-25h2-<YYYYMMDD>   # dated immutable tag
 ```
 
 ### 1. Pull
 
 ```bash
 # Requires oras CLI -- https://oras.land
-oras pull ghcr.io/cmgs/windows:win11-25h2
+oras pull ghcr.io/cocoonstack/windows:win11-25h2
 ```
 
 This drops the split parts and `SHA256SUMS` into the current directory:
@@ -167,7 +167,7 @@ curl -fsSL -o /usr/local/share/cloud-hypervisor/CLOUDHV.fd \
 ### Building via GitHub Actions
 
 ```bash
-gh workflow run build.yml --repo CMGS/windows -f version_tag=win11-25h2
+gh workflow run build.yml --repo cocoonstack/windows -f version_tag=win11-25h2
 ```
 
 Requires one repository secret:
