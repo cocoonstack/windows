@@ -127,16 +127,18 @@ jobs:
           # Assemble --file arguments for each part with media type
           ARGS=()
           for part in "${QCOW2_BASENAME}."*; do
-            ARGS+=("${part}:application/vnd.cocoonstack.windows.disk.qcow2.part")
+            ARGS+=("${part}:application/vnd.cocoonstack.disk.qcow2.part")
           done
           ARGS+=("SHA256SUMS:text/plain")
 
           oras push "$REF" \
-            --artifact-type "application/vnd.cocoonstack.windows-image.v1+json" \
+            --artifact-type "application/vnd.cocoonstack.os-image.v1+json" \
             --annotation "org.opencontainers.image.source=https://github.com/${{ github.repository }}" \
             --annotation "org.opencontainers.image.revision=${{ github.sha }}" \
-            --annotation "org.opencontainers.image.description=Windows 11 25H2 qcow2, split parts" \
-            --annotation "cocoonstack.windows.reassemble=cat ${QCOW2_BASENAME}.*.qcow2.part > ${QCOW2_BASENAME}" \
+            --annotation "cocoonstack.os.name=windows" \
+            --annotation "cocoonstack.os.version=${{ inputs.version_tag }}" \
+            --annotation "cocoonstack.disk.format=qcow2" \
+            --annotation "cocoonstack.disk.reassemble=cat ${QCOW2_BASENAME}.*.qcow2.part > ${QCOW2_BASENAME}" \
             "${ARGS[@]}"
 
           # Also push "latest" tag for the version family
