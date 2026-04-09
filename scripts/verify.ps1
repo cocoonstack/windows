@@ -109,6 +109,67 @@ Check "DisableShutdownNamedPipeCheck = 1" ($dsp -eq 1)
 $swl = (Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System').shutdownwithoutlogon
 Check "shutdownwithoutlogon = 1" ($swl -eq 1)
 
+# --- VM UI optimization ---
+$vfx = (Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects').VisualFXSetting
+Check "Visual effects = Best Performance (2)" ($vfx -eq 2)
+
+$trans = (Get-ItemProperty 'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Themes\Personalize').EnableTransparency
+Check "Transparency disabled" ($trans -eq 0)
+
+$menuDelay = (Get-ItemProperty 'HKCU:\Control Panel\Desktop').MenuShowDelay
+Check "MenuShowDelay = 0" ($menuDelay -eq "0")
+
+# --- High perf power plan ---
+$activePlan = (powercfg /getactivescheme 2>&1 | Out-String)
+Check "High Performance power plan" ($activePlan -match "8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c")
+
+# --- Unnecessary services disabled ---
+$sysmain = Get-Service SysMain -ErrorAction SilentlyContinue
+Check "SysMain disabled" ($null -eq $sysmain -or $sysmain.StartType -eq "Disabled")
+
+$wsearch = Get-Service WSearch -ErrorAction SilentlyContinue
+Check "WSearch disabled" ($null -eq $wsearch -or $wsearch.StartType -eq "Disabled")
+
+# --- Bloat features disabled ---
+$gameDvr = (Get-ItemProperty 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\GameDVR' -ErrorAction SilentlyContinue).AllowGameDVR
+Check "Game Bar/DVR disabled" ($gameDvr -eq 0)
+
+$noLock = (Get-ItemProperty 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\Personalization' -ErrorAction SilentlyContinue).NoLockScreen
+Check "Lock screen disabled" ($noLock -eq 1)
+
+# --- Background I/O reduction ---
+$telemetry = (Get-ItemProperty 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\DataCollection' -ErrorAction SilentlyContinue).AllowTelemetry
+Check "Telemetry disabled" ($telemetry -eq 0)
+
+$storeAuto = (Get-ItemProperty 'HKLM:\SOFTWARE\Policies\Microsoft\WindowsStore' -ErrorAction SilentlyContinue).AutoDownload
+Check "Store auto-download disabled" ($storeAuto -eq 2)
+
+$doMode = (Get-ItemProperty 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\DeliveryOptimization' -ErrorAction SilentlyContinue).DODownloadMode
+Check "Delivery Optimization off" ($doMode -eq 0)
+
+# --- Cortana / Copilot / tips disabled ---
+$cortana = (Get-ItemProperty 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\Windows Search' -ErrorAction SilentlyContinue).AllowCortana
+Check "Cortana disabled" ($cortana -eq 0)
+
+$copilot = (Get-ItemProperty 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsCopilot' -ErrorAction SilentlyContinue).TurnOffWindowsCopilot
+Check "Copilot disabled" ($copilot -eq 1)
+
+$tips = (Get-ItemProperty 'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\ContentDeliveryManager' -ErrorAction SilentlyContinue).SubscribedContent-338389Enabled
+Check "Tips/suggestions disabled" ($tips -eq 0)
+
+$silentApps = (Get-ItemProperty 'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\ContentDeliveryManager' -ErrorAction SilentlyContinue).SilentInstalledAppsEnabled
+Check "Silent app installs disabled" ($silentApps -eq 0)
+
+$startupDelay = (Get-ItemProperty 'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Serialize' -ErrorAction SilentlyContinue).StartupDelayInMSec
+Check "Startup delay = 0" ($startupDelay -eq 0)
+
+# --- DWM / window animations ---
+$minAnim = (Get-ItemProperty 'HKCU:\Control Panel\Desktop\WindowMetrics' -ErrorAction SilentlyContinue).MinAnimate
+Check "Window minimize animation off" ($minAnim -eq "0")
+
+$dragFull = (Get-ItemProperty 'HKCU:\Control Panel\Desktop' -ErrorAction SilentlyContinue).DragFullWindows
+Check "Drag full windows off" ($dragFull -eq "0")
+
 # --- Hostname ---
 Check "Hostname = COCOON-VM" ((hostname) -eq "COCOON-VM")
 

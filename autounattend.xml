@@ -117,9 +117,48 @@
         <SynchronousCommand wcm:action="add"><Order>27</Order><CommandLine>reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System" /v DisableShutdownNamedPipeCheck /t REG_DWORD /d 1 /f</CommandLine></SynchronousCommand>
         <SynchronousCommand wcm:action="add"><Order>28</Order><CommandLine>reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System" /v shutdownwithoutlogon /t REG_DWORD /d 1 /f</CommandLine></SynchronousCommand>
 
+        <!-- VM performance: disable visual effects and UI overhead -->
+        <SynchronousCommand wcm:action="add"><Order>29</Order><CommandLine>reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects" /v VisualFXSetting /t REG_DWORD /d 2 /f</CommandLine></SynchronousCommand>
+        <SynchronousCommand wcm:action="add"><Order>30</Order><CommandLine>reg add "HKCU\Control Panel\Desktop" /v UserPreferencesMask /t REG_BINARY /d 9012038010000000 /f</CommandLine></SynchronousCommand>
+        <SynchronousCommand wcm:action="add"><Order>31</Order><CommandLine>reg add "HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Themes\Personalize" /v EnableTransparency /t REG_DWORD /d 0 /f</CommandLine></SynchronousCommand>
+        <SynchronousCommand wcm:action="add"><Order>32</Order><CommandLine>reg add "HKCU\Control Panel\Desktop" /v MenuShowDelay /t REG_SZ /d 0 /f</CommandLine></SynchronousCommand>
+        <SynchronousCommand wcm:action="add"><Order>33</Order><CommandLine>reg add "HKCU\Control Panel\Desktop" /v Wallpaper /t REG_SZ /d "" /f</CommandLine></SynchronousCommand>
+
+        <!-- VM performance: high perf power plan, no sleep/display timeout -->
+        <SynchronousCommand wcm:action="add"><Order>34</Order><CommandLine>powershell -Command "powercfg /setactive 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c; powercfg /change monitor-timeout-ac 0; powercfg /change standby-timeout-ac 0"</CommandLine></SynchronousCommand>
+
+        <!-- VM performance: disable unnecessary services -->
+        <SynchronousCommand wcm:action="add"><Order>35</Order><CommandLine>powershell -Command "Set-Service SysMain -StartupType Disabled -EA SilentlyContinue; Stop-Service SysMain -Force -EA SilentlyContinue; Set-Service WSearch -StartupType Disabled -EA SilentlyContinue; Stop-Service WSearch -Force -EA SilentlyContinue"</CommandLine></SynchronousCommand>
+
+        <!-- VM performance: disable bloat features -->
+        <SynchronousCommand wcm:action="add"><Order>36</Order><CommandLine>reg add "HKLM\SOFTWARE\Policies\Microsoft\Windows\GameDVR" /v AllowGameDVR /t REG_DWORD /d 0 /f</CommandLine></SynchronousCommand>
+        <SynchronousCommand wcm:action="add"><Order>37</Order><CommandLine>reg add "HKLM\SOFTWARE\Policies\Microsoft\Dsh" /v AllowNewsAndInterests /t REG_DWORD /d 0 /f</CommandLine></SynchronousCommand>
+        <SynchronousCommand wcm:action="add"><Order>38</Order><CommandLine>reg add "HKLM\SOFTWARE\Policies\Microsoft\Windows\Personalization" /v NoLockScreen /t REG_DWORD /d 1 /f</CommandLine></SynchronousCommand>
+
+        <!-- VM performance: reduce background I/O -->
+        <SynchronousCommand wcm:action="add"><Order>39</Order><CommandLine>reg add "HKLM\SOFTWARE\Policies\Microsoft\Windows\DataCollection" /v AllowTelemetry /t REG_DWORD /d 0 /f</CommandLine></SynchronousCommand>
+        <SynchronousCommand wcm:action="add"><Order>40</Order><CommandLine>reg add "HKLM\SOFTWARE\Policies\Microsoft\WindowsStore" /v AutoDownload /t REG_DWORD /d 2 /f</CommandLine></SynchronousCommand>
+        <SynchronousCommand wcm:action="add"><Order>41</Order><CommandLine>reg add "HKLM\SOFTWARE\Policies\Microsoft\Windows\DeliveryOptimization" /v DODownloadMode /t REG_DWORD /d 0 /f</CommandLine></SynchronousCommand>
+
+        <!-- VM performance: disable Cortana, Copilot, startup delay, tips -->
+        <SynchronousCommand wcm:action="add"><Order>42</Order><CommandLine>reg add "HKLM\SOFTWARE\Policies\Microsoft\Windows\Windows Search" /v AllowCortana /t REG_DWORD /d 0 /f</CommandLine></SynchronousCommand>
+        <SynchronousCommand wcm:action="add"><Order>43</Order><CommandLine>reg add "HKLM\SOFTWARE\Policies\Microsoft\Windows\WindowsCopilot" /v TurnOffWindowsCopilot /t REG_DWORD /d 1 /f</CommandLine></SynchronousCommand>
+        <SynchronousCommand wcm:action="add"><Order>44</Order><CommandLine>reg add "HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" /v SubscribedContent-338389Enabled /t REG_DWORD /d 0 /f</CommandLine></SynchronousCommand>
+        <SynchronousCommand wcm:action="add"><Order>45</Order><CommandLine>reg add "HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" /v SubscribedContent-310093Enabled /t REG_DWORD /d 0 /f</CommandLine></SynchronousCommand>
+        <SynchronousCommand wcm:action="add"><Order>46</Order><CommandLine>reg add "HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" /v SilentInstalledAppsEnabled /t REG_DWORD /d 0 /f</CommandLine></SynchronousCommand>
+        <SynchronousCommand wcm:action="add"><Order>47</Order><CommandLine>reg add "HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Serialize" /v StartupDelayInMSec /t REG_DWORD /d 0 /f</CommandLine></SynchronousCommand>
+
+        <!-- VM performance: disable DWM animations and smooth scrolling -->
+        <SynchronousCommand wcm:action="add"><Order>48</Order><CommandLine>reg add "HKCU\Control Panel\Desktop\WindowMetrics" /v MinAnimate /t REG_SZ /d 0 /f</CommandLine></SynchronousCommand>
+        <SynchronousCommand wcm:action="add"><Order>49</Order><CommandLine>reg add "HKCU\Control Panel\Desktop" /v DragFullWindows /t REG_SZ /d 0 /f</CommandLine></SynchronousCommand>
+        <SynchronousCommand wcm:action="add"><Order>50</Order><CommandLine>reg add "HKCU\Control Panel\Desktop" /v FontSmoothing /t REG_SZ /d 2 /f</CommandLine></SynchronousCommand>
+
+        <!-- VM performance: disable scheduled tasks that waste CPU -->
+        <SynchronousCommand wcm:action="add"><Order>51</Order><CommandLine>powershell -Command "Disable-ScheduledTask -TaskName '\Microsoft\Windows\Application Experience\Microsoft Compatibility Appraiser' -EA SilentlyContinue; Disable-ScheduledTask -TaskName '\Microsoft\Windows\Defrag\ScheduledDefrag' -EA SilentlyContinue; Disable-ScheduledTask -TaskName '\Microsoft\Windows\DiskDiagnostic\Microsoft-Windows-DiskDiagnosticDataCollector' -EA SilentlyContinue"</CommandLine></SynchronousCommand>
+
         <!-- Restore QuickEdit and mark completion -->
-        <SynchronousCommand wcm:action="add"><Order>29</Order><CommandLine>reg add "HKCU\Console" /v QuickEdit /t REG_DWORD /d 1 /f</CommandLine></SynchronousCommand>
-        <SynchronousCommand wcm:action="add"><Order>30</Order><CommandLine>cmd /c "echo %date% %time% > C:\install.success"</CommandLine></SynchronousCommand>
+        <SynchronousCommand wcm:action="add"><Order>52</Order><CommandLine>reg add "HKCU\Console" /v QuickEdit /t REG_DWORD /d 1 /f</CommandLine></SynchronousCommand>
+        <SynchronousCommand wcm:action="add"><Order>53</Order><CommandLine>cmd /c "echo %date% %time% > C:\install.success"</CommandLine></SynchronousCommand>
       </FirstLogonCommands>
     </component>
   </settings>

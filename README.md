@@ -174,7 +174,7 @@ Requires one repository secret:
 
 - `WINDOWS_ISO_URL` — signed download URL for the Windows 11 25H2 ISO. Microsoft licensing prohibits bundling the ISO in the repo or any artifact, so fetch it at build time.
 
-The workflow still only asks for `version_tag` and `disk_size`; it uses the
+The workflow asks for `image_name`, `version_tag`, and `disk_size`; it uses the
 script defaults for guest CPU and memory because those overrides are not exposed
 as workflow inputs.
 
@@ -399,27 +399,38 @@ The included [`autounattend.xml`](autounattend.xml) drives the install across th
 - **International-Core**: `InputLocale=0409:00000409` only. The component must be present here for Windows 11 25H2 OOBE to skip the country / keyboard selection screens.
 - **OOBE**: hides EULA, online account, wireless setup.
 - **User account**: local admin `cocoon` with auto-logon (password base64-encoded in XML).
-- **FirstLogonCommands**: 27 commands.
+- **FirstLogonCommands**: 53 commands.
 
 | Order  | Action                       | Notes |
 |--------|------------------------------|-------|
-| 1-2    | **RDP**                      | `fDenyTSConnections=0` + `Enable-NetFirewallRule` |
-| 3-4    | **SSH**                      | `Add-WindowsCapability OpenSSH.Server`, auto-start, firewall rule |
-| 5      | **ICMP**                     | Allow ping |
-| 6      | **Firewall**                 | Disable all profiles (dev/test environment) |
-| 7      | **Hibernate**                | `powercfg /h off` |
-| 8-10   | **EMS boot flags**           | `bcdedit /emssettings emsport:1 emsbaudrate:115200`, `/ems on`, `/bootems on` |
-| 11     | **TermService**              | Set to auto-start |
-| 12     | **EMS-SAC FoD**              | Install `Windows.Desktop.EMS-SAC.Tools~~~~0.0.1.0` — required for a real SAC console on Win11 client |
-| 13     | **Network profile**          | Set to Private (required before WinRM AllowUnencrypted) |
-| 14-17  | **WinRM**                    | Enable PS Remoting, AllowUnencrypted, Basic auth, firewall on 5985 |
-| 18     | **Hostname**                 | Force `Rename-Computer` to `COCOON-VM` (specialize ComputerName unreliable on 25H2) |
-| 19     | **virtio-win guest tools**   | Silent install `virtio-win-guest-tools.exe /S` from CD-ROM — drivers + QEMU Guest Agent + spice agent in one shot |
-| 20     | **Unhide PBUTTONACTION**     | `powercfg /attributes ... -ATTRIB_HIDE` — see quirk #5 |
-| 21-23  | **ACPI power button = Shut down** | `PBUTTONACTION=3` for AC + DC power schemes, referenced by full GUID |
-| 24-25  | **Shutdown optimization**    | `WaitToKillServiceTimeout=5000`, `DisableShutdownNamedPipeCheck=1` |
-| 26     | **Shutdown without logon**   | Allow remote `shutdown /s /t 0` with no user logged in |
-| 27     | **Install marker**           | `cmd /c "echo %date% %time% > C:\install.success"` |
+| 1      | **QuickEdit off**            | Prevent VNC mouse events from freezing the console during install |
+| 2-3    | **RDP**                      | `fDenyTSConnections=0` + `Enable-NetFirewallRule` |
+| 4-5    | **SSH**                      | `Add-WindowsCapability OpenSSH.Server`, auto-start, firewall rule |
+| 6      | **ICMP**                     | Allow ping |
+| 7      | **Firewall**                 | Disable all profiles (dev/test environment) |
+| 8      | **Hibernate**                | `powercfg /h off` |
+| 9-11   | **EMS boot flags**           | `bcdedit /emssettings emsport:1 emsbaudrate:115200`, `/ems on`, `/bootems on` |
+| 12     | **TermService**              | Set to auto-start |
+| 13     | **EMS-SAC FoD**              | Install `Windows.Desktop.EMS-SAC.Tools~~~~0.0.1.0` — required for a real SAC console on Win11 client |
+| 14     | **Network profile**          | Set to Private (required before WinRM AllowUnencrypted) |
+| 15-19  | **WinRM**                    | Enable PS Remoting, AllowUnencrypted, Basic auth, auto-start, firewall on 5985 |
+| 20     | **Hostname**                 | Force `Rename-Computer` to `COCOON-VM` (specialize ComputerName unreliable on 25H2) |
+| 21     | **virtio-win guest tools**   | Silent install `virtio-win-guest-tools.exe /S` from CD-ROM |
+| 22     | **Unhide PBUTTONACTION**     | `powercfg /attributes ... -ATTRIB_HIDE` — see quirk #5 |
+| 23-25  | **ACPI power button = Shut down** | `PBUTTONACTION=3` for AC + DC power schemes, referenced by full GUID |
+| 26-28  | **Shutdown optimization**    | `WaitToKillServiceTimeout=5000`, `DisableShutdownNamedPipeCheck=1`, `shutdownwithoutlogon=1` |
+| 29-33  | **VM UI optimization**       | Visual effects → Best Performance, disable transparency, zero menu delay, no wallpaper |
+| 34     | **High perf power plan**     | `powercfg /setactive` High Performance GUID, disable display/sleep timeout |
+| 35     | **Disable services**         | Stop and disable SysMain (Superfetch) + WSearch (indexing) |
+| 36-38  | **Disable bloat**            | Game Bar/DVR, Widgets, lock screen |
+| 39-41  | **Reduce background I/O**   | Telemetry off, Store auto-download off, Delivery Optimization off |
+| 42-43  | **Disable Cortana/Copilot**  | Policy keys to suppress both features |
+| 44-46  | **Disable tips/silent apps** | Content delivery, suggestions, silent app installs |
+| 47     | **Zero startup delay**       | `Explorer\Serialize\StartupDelayInMSec=0` |
+| 48-50  | **DWM tuning**               | No minimize animation, no drag full windows, ClearType font smoothing |
+| 51     | **Disable scheduled tasks**  | Compatibility Appraiser, ScheduledDefrag, DiskDiagnostic |
+| 52     | **QuickEdit restore**        | Restore QuickEdit after install |
+| 53     | **Install marker**           | `cmd /c "echo %date% %time% > C:\install.success"` |
 
 > **Note on WinRM persistence**: `Enable-PSRemoting` + the `AllowUnencrypted`/`Basic` WSMan settings set by orders 14-16 do not always survive the very first post-install reboot on Win11 25H2. `remediate.ps1` re-applies them from the same deterministic settings, and the CI loop reboots → verifies → remediates → re-verifies to make the final image idempotent.
 
