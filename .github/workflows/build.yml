@@ -3,10 +3,14 @@ name: Build Windows qcow2
 on:
   workflow_dispatch:
     inputs:
-      version_tag:
-        description: "OCI tag for ghcr.io/cocoonstack/windows"
+      image_name:
+        description: "Image name under ghcr.io/cocoonstack/windows/"
         required: true
-        default: "win11-25h2"
+        default: "win11"
+      version_tag:
+        description: "Version tag for the image"
+        required: true
+        default: "25h2"
       disk_size:
         description: "Disk image size"
         required: true
@@ -117,7 +121,7 @@ jobs:
 
           REPO_LC=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
           TAG="${{ inputs.version_tag }}-$(date -u +%Y%m%d)"
-          REF="ghcr.io/${REPO_LC}:${TAG}"
+          REF="ghcr.io/${REPO_LC}/${{ inputs.image_name }}:${TAG}"
           cd "$QCOW2_DIR"
 
           # Assemble --file arguments for each part with media type
@@ -139,7 +143,7 @@ jobs:
           oras tag "$REF" "${{ inputs.version_tag }}"
 
           echo "Pushed: $REF"
-          echo "Pushed: ghcr.io/${REPO_LC}:${{ inputs.version_tag }}"
+          echo "Pushed: ghcr.io/${REPO_LC}/${{ inputs.image_name }}:${{ inputs.version_tag }}"
 
       - name: Upload debug artifacts
         if: always()
