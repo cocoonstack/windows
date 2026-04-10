@@ -154,7 +154,7 @@ Check "Cortana disabled" ($cortana -eq 0)
 $copilot = (Get-ItemProperty 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsCopilot' -ErrorAction SilentlyContinue).TurnOffWindowsCopilot
 Check "Copilot disabled" ($copilot -eq 1)
 
-$tips = (Get-ItemProperty 'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\ContentDeliveryManager' -ErrorAction SilentlyContinue).SubscribedContent-338389Enabled
+$tips = (Get-ItemProperty 'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\ContentDeliveryManager' -ErrorAction SilentlyContinue).'SubscribedContent-338389Enabled'
 Check "Tips/suggestions disabled" ($tips -eq 0)
 
 $silentApps = (Get-ItemProperty 'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\ContentDeliveryManager' -ErrorAction SilentlyContinue).SilentInstalledAppsEnabled
