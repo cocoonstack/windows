@@ -102,7 +102,7 @@ reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects" 
 reg add "HKCU\Control Panel\Desktop" /v UserPreferencesMask /t REG_BINARY /d 9012038010000000 /f
 reg add "HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Themes\Personalize" /v EnableTransparency /t REG_DWORD /d 0 /f
 reg add "HKCU\Control Panel\Desktop" /v MenuShowDelay /t REG_SZ /d 0 /f
-reg add "HKCU\Control Panel\Desktop" /v Wallpaper /t REG_SZ /d "" /f
+Set-ItemProperty 'HKCU:\Control Panel\Desktop' -Name Wallpaper -Value ''
 
 # --- High perf power plan ---
 Write-Output "Setting High Performance power plan..."

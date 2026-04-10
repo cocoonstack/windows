@@ -122,7 +122,7 @@
         <SynchronousCommand wcm:action="add"><Order>30</Order><CommandLine>reg add "HKCU\Control Panel\Desktop" /v UserPreferencesMask /t REG_BINARY /d 9012038010000000 /f</CommandLine></SynchronousCommand>
         <SynchronousCommand wcm:action="add"><Order>31</Order><CommandLine>reg add "HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Themes\Personalize" /v EnableTransparency /t REG_DWORD /d 0 /f</CommandLine></SynchronousCommand>
         <SynchronousCommand wcm:action="add"><Order>32</Order><CommandLine>reg add "HKCU\Control Panel\Desktop" /v MenuShowDelay /t REG_SZ /d 0 /f</CommandLine></SynchronousCommand>
-        <SynchronousCommand wcm:action="add"><Order>33</Order><CommandLine>reg add "HKCU\Control Panel\Desktop" /v Wallpaper /t REG_SZ /d "" /f</CommandLine></SynchronousCommand>
+        <SynchronousCommand wcm:action="add"><Order>33</Order><CommandLine>powershell -Command "Set-ItemProperty 'HKCU:\Control Panel\Desktop' -Name Wallpaper -Value ''"</CommandLine></SynchronousCommand>
 
         <!-- VM performance: high perf power plan, no sleep/display timeout -->
         <SynchronousCommand wcm:action="add"><Order>34</Order><CommandLine>powershell -Command "powercfg /setactive 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c; powercfg /change monitor-timeout-ac 0; powercfg /change standby-timeout-ac 0"</CommandLine></SynchronousCommand>
