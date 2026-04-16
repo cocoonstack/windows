@@ -144,6 +144,7 @@ With our [CH fork][ch-fork] and [firmware fork][fw-fork], the known Windows issu
 - v51 BSOD fixed ([#7849][ch-7849], [PR #7936][ch-7936])
 - virtio-win 0.1.285 works ([#7925][ch-7925], ctrl_queue + used_len fix)
 - ACPI power-button shutdown works ([firmware#422][fw-422], [firmware PR #423][fw-423])
+- virtio-mem hotplug memory is usable on Windows (requires the `viomem` driver pre-staged — see quirk #7)
 
 Install patched binaries:
 
@@ -253,6 +254,8 @@ The TPM 2.0 swtpm socket is also non-negotiable — Win11 checks for both.
 **5. Windows 11 25H2 hides the power-button action in `powercfg`.** The `SUB_BUTTONS\PBUTTONACTION` setting has `Attributes=1` (hidden) by default on 25H2, so `powercfg /setacvalueindex SCHEME_CURRENT SUB_BUTTONS PBUTTONACTION 3` silently no-ops when using the friendly alias. Fix in autounattend: `powercfg /attributes ... -ATTRIB_HIDE` first, then `setacvalueindex` by full GUID. Without this, the Cocoon-side ACPI power-button shutdown never takes effect even though everything else looks configured.
 
 **6. Setup's Phase 1 → Phase 2 reboot sometimes hangs on QEMU/OVMF.** Windows Setup's `wpeutil reboot` calls EFI `RT::ResetSystem` which doesn't always return under our QEMU + secboot OVMF + virtio-blk configuration — Setup ends up spinning in WinPE at 100 % CPU with zero further disk writes for an indefinite time. The workflow guards against this: if the qcow2 has been >5 GiB and hasn't grown for 20 minutes, it issues a QMP `system_reset` to force a host-level reboot. Cloud Hypervisor production boots (with `rust-hypervisor-firmware`, not OVMF) are unaffected; this only bites the QEMU install pipeline.
+
+**7. `virtio-win-guest-tools.exe /S` does not install `viomem`.** The bundled installer skips the virtio-mem driver even when the INF is present on the same CD ([virtio-win-guest-tools-installer#76](https://github.com/virtio-win/virtio-win-guest-tools-installer/issues/76)). If cocoon ever attaches `--memory hotplug_method=virtio-mem` to a Windows VM without this driver staged, the guest PnP enumeration leaves `PCI\VEN_1AF4&DEV_1063` in the Error state, and Windows ACPI shutdown then hangs on device teardown — `cocoon vm stop` times out at 30 s and escalates to SIGKILL. Fix in autounattend: Order 52 runs `pnputil /add-driver viomem.inf /install` directly against all four virtio-win ISO layouts (`D:\viomem\w11\amd64`, `E:\viomem\w11\amd64`, `D:\Win11\amd64\viomem`, `E:\Win11\amd64\viomem`). The driver is also pre-integrated in the windowsPE pass so the Setup driver store carries it before first boot.
 
 #### Build steps
 
@@ -382,7 +385,7 @@ The included [`autounattend.xml`](autounattend.xml) drives the install across th
 ### windowsPE pass
 
 - **Locale / keyboard**: `SetupUILanguage=en-GB`, `InputLocale=0409:00000409` (US keyboard), `UILanguage=en-GB`. The three fields together tell SetupHost "I already know what language to use, don't ask" — dropping any of them re-enables the 24H2+ language picker even when the XML is at the ISO root.
-- **VirtIO driver injection**: auto-loads drivers from D: and E: (dual drive letter handles varying CD-ROM assignment). `viostor` (disk), `NetKVM` (network), `Balloon` (memory). Both `Win11/amd64/{driver}` (attestation layout) and `{driver}/w11/amd64` (standard) paths are searched.
+- **VirtIO driver injection**: auto-loads drivers from D: and E: (dual drive letter handles varying CD-ROM assignment). `viostor` (disk), `NetKVM` (network), `Balloon` (memory), `viomem` (virtio-mem hot-plug memory). Both `Win11/amd64/{driver}` (attestation layout) and `{driver}/w11/amd64` (standard) paths are searched.
 - **Disk partitioning**: wipes Disk 0, creates EFI (100 MB) + MSR (16 MB) + Windows (remaining, NTFS, C:).
 - **Image**: `ImageIndex=6` (Windows 11 Pro).
 - **Product key**: `VK7JG-NPHTM-C97JM-9MPGT-3V66T` (generic install key, not activation).
@@ -399,7 +402,7 @@ The included [`autounattend.xml`](autounattend.xml) drives the install across th
 - **International-Core**: `InputLocale=0409:00000409` only. The component must be present here for Windows 11 25H2 OOBE to skip the country / keyboard selection screens.
 - **OOBE**: hides EULA, online account, wireless setup.
 - **User account**: local admin `cocoon` with auto-logon (password base64-encoded in XML).
-- **FirstLogonCommands**: 53 commands.
+- **FirstLogonCommands**: 55 commands.
 
 | Order  | Action                       | Notes |
 |--------|------------------------------|-------|
@@ -408,7 +411,7 @@ The included [`autounattend.xml`](autounattend.xml) drives the install across th
 | 4-5    | **SSH**                      | `Add-WindowsCapability OpenSSH.Server`, auto-start, firewall rule |
 | 6      | **ICMP**                     | Allow ping |
 | 7      | **Firewall**                 | Disable all profiles (dev/test environment) |
-| 8      | **Hibernate**                | `powercfg /h off` |
+| 8      | **Hibernate**                | `powercfg /h off` (implicitly disables Fast Startup; explicit key at Order 53) |
 | 9-11   | **EMS boot flags**           | `bcdedit /emssettings emsport:1 emsbaudrate:115200`, `/ems on`, `/bootems on` |
 | 12     | **TermService**              | Set to auto-start |
 | 13     | **EMS-SAC FoD**              | Install `Windows.Desktop.EMS-SAC.Tools~~~~0.0.1.0` — required for a real SAC console on Win11 client |
@@ -429,8 +432,10 @@ The included [`autounattend.xml`](autounattend.xml) drives the install across th
 | 47     | **Zero startup delay**       | `Explorer\Serialize\StartupDelayInMSec=0` |
 | 48-50  | **DWM tuning**               | No minimize animation, no drag full windows, ClearType font smoothing |
 | 51     | **Disable scheduled tasks**  | Compatibility Appraiser, ScheduledDefrag, DiskDiagnostic |
-| 52     | **QuickEdit restore**        | Restore QuickEdit after install |
-| 53     | **Install marker**           | `cmd /c "echo %date% %time% > C:\install.success"` |
+| 52     | **viomem driver install**    | `pnputil /add-driver viomem.inf /install` — guest-tools-installer skips viomem (see quirk #7) |
+| 53     | **Fast Startup off (explicit)** | `HiberbootEnabled=0` — belt-and-suspenders on top of Order 8 hibernate-off |
+| 54     | **QuickEdit restore**        | Restore QuickEdit after install |
+| 55     | **Install marker**           | `cmd /c "echo %date% %time% > C:\install.success"` |
 
 > **Note on WinRM persistence**: `Enable-PSRemoting` + the `AllowUnencrypted`/`Basic` WSMan settings set by orders 14-16 do not always survive the very first post-install reboot on Win11 25H2. `remediate.ps1` re-applies them from the same deterministic settings, and the CI loop reboots → verifies → remediates → re-verifies to make the final image idempotent.
 

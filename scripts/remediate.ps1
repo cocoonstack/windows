@@ -28,8 +28,12 @@ netsh advfirewall firewall add rule name="Allow ICMPv4" protocol=icmpv4:8,any di
 Write-Output "Disabling firewall..."
 Set-NetFirewallProfile -All -Enabled False
 
-# --- Hibernate off ---
+# --- Hibernate + Fast Startup off ---
+# powercfg /h off disables hibernation which implicitly disables Fast Startup.
+# The explicit HiberbootEnabled=0 policy key is belt-and-suspenders: without it,
+# viomem hot-unplug during a hybrid shutdown can hang (virtio-win#1444).
 powercfg /h off
+reg add "HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\Power" /v HiberbootEnabled /t REG_DWORD /d 0 /f
 
 # --- SAC / EMS ---
 Write-Output "Configuring SAC/EMS..."
@@ -78,6 +82,34 @@ if (-not $vgt) {
         & E:\virtio-win-guest-tools.exe /S | Out-Null
     } else {
         Write-Output "WARNING: virtio-win-guest-tools.exe not found on D: or E:"
+    }
+}
+
+# --- virtio-mem driver (viomem) ---
+# The guest-tools-installer does not install viomem (virtio-win-guest-tools-installer#76).
+# Install it directly via pnputil so Windows binds PCI VEN_1AF4&DEV_1063 and the
+# virtio-mem PCI device leaves Error state. Without this, ACPI shutdown hangs on
+# device teardown and cocoon vm stop hits the 30s timeout.
+$viomemBound = Get-PnpDevice -Class System -ErrorAction SilentlyContinue |
+    Where-Object { $_.FriendlyName -match 'VirtIO.*Memory|viomem' -and $_.Status -eq 'OK' }
+if (-not $viomemBound) {
+    Write-Output "Installing viomem driver..."
+    $viomemPaths = @(
+        'D:\viomem\w11\amd64\viomem.inf',
+        'E:\viomem\w11\amd64\viomem.inf',
+        'D:\Win11\amd64\viomem\viomem.inf',
+        'E:\Win11\amd64\viomem\viomem.inf'
+    )
+    $installed = $false
+    foreach ($p in $viomemPaths) {
+        if (Test-Path $p) {
+            Write-Output "  pnputil /add-driver $p /install"
+            pnputil /add-driver $p /install | Out-Null
+            if ($LASTEXITCODE -eq 0) { $installed = $true; break }
+        }
+    }
+    if (-not $installed) {
+        Write-Output "WARNING: viomem.inf not found on D: or E: in either layout"
     }
 }
 

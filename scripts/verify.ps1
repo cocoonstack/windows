@@ -95,6 +95,11 @@ Check "Firewall all profiles off" ($fwOn -eq 0)
 $pwr = powercfg /a 2>&1 | Out-String
 Check "Hibernate disabled" ($pwr -match "Hibernation has not been enabled")
 
+# --- Fast Startup (hybrid shutdown) explicit policy ---
+# HiberbootEnabled=0 guards against viomem hot-unplug hang during hybrid shutdown.
+$hiberboot = (Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Power' -ErrorAction SilentlyContinue).HiberbootEnabled
+Check "Fast Startup disabled (HiberbootEnabled=0)" ($hiberboot -eq 0)
+
 # --- ACPI power button ---
 $pb = powercfg /query SCHEME_CURRENT SUB_BUTTONS PBUTTONACTION 2>&1 | Out-String
 Check "ACPI power button = shutdown (3)" ($pb -match "0x00000003")
@@ -177,6 +182,14 @@ Check "Hostname = COCOON-VM" ((hostname) -eq "COCOON-VM")
 # Minimum 2 (viostor + NetKVM); Balloon only present if host exposes virtio-balloon device
 $vd = Get-WmiObject Win32_PnPSignedDriver | Where-Object { $_.DeviceName -match 'VirtIO' }
 Check "VirtIO drivers (>=2)" ($vd.Count -ge 2)
+
+# --- viomem driver staged ---
+# Windows only binds the PCI function (VEN_1AF4&DEV_1063) when the host exposes
+# virtio-mem; the driver must be pre-staged in the driver store so PnP can find it.
+# Check the DriverStoreRepository rather than a live PnP device, since the build
+# pipeline verifies images that boot without virtio-mem attached.
+$viomemOem = Get-ChildItem "$env:windir\System32\DriverStore\FileRepository\" -Filter 'viomem.inf*' -Directory -ErrorAction SilentlyContinue
+Check "viomem driver staged in driver store" ($null -ne $viomemOem -and $viomemOem.Count -ge 1)
 
 # --- virtio-win guest tools ---
 $vgt = Get-ItemProperty "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*" |

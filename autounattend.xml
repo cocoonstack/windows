@@ -15,10 +15,14 @@
         <PathAndCredentials wcm:action="add" wcm:keyValue="4"><Path>E:\Win11\amd64\NetKvm</Path></PathAndCredentials>
         <PathAndCredentials wcm:action="add" wcm:keyValue="5"><Path>D:\Win11\amd64\Balloon</Path></PathAndCredentials>
         <PathAndCredentials wcm:action="add" wcm:keyValue="6"><Path>E:\Win11\amd64\Balloon</Path></PathAndCredentials>
-        <PathAndCredentials wcm:action="add" wcm:keyValue="7"><Path>D:\viostor\w11\amd64</Path></PathAndCredentials>
-        <PathAndCredentials wcm:action="add" wcm:keyValue="8"><Path>E:\viostor\w11\amd64</Path></PathAndCredentials>
-        <PathAndCredentials wcm:action="add" wcm:keyValue="9"><Path>D:\NetKVM\w11\amd64</Path></PathAndCredentials>
-        <PathAndCredentials wcm:action="add" wcm:keyValue="10"><Path>E:\NetKVM\w11\amd64</Path></PathAndCredentials>
+        <PathAndCredentials wcm:action="add" wcm:keyValue="7"><Path>D:\Win11\amd64\viomem</Path></PathAndCredentials>
+        <PathAndCredentials wcm:action="add" wcm:keyValue="8"><Path>E:\Win11\amd64\viomem</Path></PathAndCredentials>
+        <PathAndCredentials wcm:action="add" wcm:keyValue="9"><Path>D:\viostor\w11\amd64</Path></PathAndCredentials>
+        <PathAndCredentials wcm:action="add" wcm:keyValue="10"><Path>E:\viostor\w11\amd64</Path></PathAndCredentials>
+        <PathAndCredentials wcm:action="add" wcm:keyValue="11"><Path>D:\NetKVM\w11\amd64</Path></PathAndCredentials>
+        <PathAndCredentials wcm:action="add" wcm:keyValue="12"><Path>E:\NetKVM\w11\amd64</Path></PathAndCredentials>
+        <PathAndCredentials wcm:action="add" wcm:keyValue="13"><Path>D:\viomem\w11\amd64</Path></PathAndCredentials>
+        <PathAndCredentials wcm:action="add" wcm:keyValue="14"><Path>E:\viomem\w11\amd64</Path></PathAndCredentials>
       </DriverPaths>
     </component>
     <component name="Microsoft-Windows-Setup" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
@@ -156,9 +160,21 @@
         <!-- VM performance: disable scheduled tasks that waste CPU -->
         <SynchronousCommand wcm:action="add"><Order>51</Order><CommandLine>powershell -Command "Disable-ScheduledTask -TaskName '\Microsoft\Windows\Application Experience\Microsoft Compatibility Appraiser' -EA SilentlyContinue; Disable-ScheduledTask -TaskName '\Microsoft\Windows\Defrag\ScheduledDefrag' -EA SilentlyContinue; Disable-ScheduledTask -TaskName '\Microsoft\Windows\DiskDiagnostic\Microsoft-Windows-DiskDiagnosticDataCollector' -EA SilentlyContinue"</CommandLine></SynchronousCommand>
 
+        <!-- virtio-mem driver (viomem): guest-tools-installer does not install it automatically
+             (virtio-win-guest-tools-installer#76). Install via pnputil so Windows binds the
+             PCI device VEN_1AF4&amp;DEV_1063; without this, virtio-mem PCI function stays in
+             Error state and blocks ACPI shutdown (cocoon vm stop hits 30s timeout). Try
+             all four path layouts the virtio-win ISO uses across drive letter and naming. -->
+        <SynchronousCommand wcm:action="add"><Order>52</Order><CommandLine>cmd /c "(pnputil /add-driver D:\viomem\w11\amd64\viomem.inf /install 2&gt;nul) || (pnputil /add-driver E:\viomem\w11\amd64\viomem.inf /install 2&gt;nul) || (pnputil /add-driver D:\Win11\amd64\viomem\viomem.inf /install 2&gt;nul) || (pnputil /add-driver E:\Win11\amd64\viomem\viomem.inf /install 2&gt;nul)"</CommandLine></SynchronousCommand>
+
+        <!-- Fast Startup off: powercfg /h off (Order 8) disables hibernation which implicitly
+             disables Fast Startup, but the explicit policy key is belt-and-suspenders. Without
+             it, viomem hot-unplug during a hybrid shutdown can hang (virtio-win#1444). -->
+        <SynchronousCommand wcm:action="add"><Order>53</Order><CommandLine>reg add "HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\Power" /v HiberbootEnabled /t REG_DWORD /d 0 /f</CommandLine></SynchronousCommand>
+
         <!-- Restore QuickEdit and mark completion -->
-        <SynchronousCommand wcm:action="add"><Order>52</Order><CommandLine>reg add "HKCU\Console" /v QuickEdit /t REG_DWORD /d 1 /f</CommandLine></SynchronousCommand>
-        <SynchronousCommand wcm:action="add"><Order>53</Order><CommandLine>cmd /c "echo %date% %time% > C:\install.success"</CommandLine></SynchronousCommand>
+        <SynchronousCommand wcm:action="add"><Order>54</Order><CommandLine>reg add "HKCU\Console" /v QuickEdit /t REG_DWORD /d 1 /f</CommandLine></SynchronousCommand>
+        <SynchronousCommand wcm:action="add"><Order>55</Order><CommandLine>cmd /c "echo %date% %time% > C:\install.success"</CommandLine></SynchronousCommand>
       </FirstLogonCommands>
     </component>
   </settings>
