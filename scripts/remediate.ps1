@@ -148,4 +148,33 @@ Disable-ScheduledTask -TaskName '\Microsoft\Windows\Application Experience\Micro
 Disable-ScheduledTask -TaskName '\Microsoft\Windows\Defrag\ScheduledDefrag' -ErrorAction SilentlyContinue
 Disable-ScheduledTask -TaskName '\Microsoft\Windows\DiskDiagnostic\Microsoft-Windows-DiskDiagnosticDataCollector' -ErrorAction SilentlyContinue
 
+# --- viosock driver ---
+$vsockCat = (netsh winsock show catalog 2>&1 | Out-String)
+if ($vsockCat -notmatch 'Virtio Vsock STREAM') {
+    Write-Output "Installing viosock driver..."
+    foreach ($p in 'D:\viosock\w11\amd64\viosock.inf',
+                  'E:\viosock\w11\amd64\viosock.inf',
+                  'D:\Win11\amd64\viosock\viosock.inf',
+                  'E:\Win11\amd64\viosock\viosock.inf') {
+        if (Test-Path $p) { pnputil /add-driver $p /install | Out-Null; break }
+    }
+}
+
+# --- NIC auto-heal task ---
+$autoheal = schtasks /query /tn CocoonNicAutoHeal 2>&1 | Out-String
+if ($LASTEXITCODE -ne 0) {
+    Write-Output "Re-creating CocoonNicAutoHeal task..."
+    @'
+$ErrorActionPreference = "SilentlyContinue"
+foreach ($d in (Get-PnpDevice -Class Net)) {
+    Disable-PnpDevice -InstanceId $d.InstanceId -Confirm:$false
+    Start-Sleep -Seconds 2
+    Enable-PnpDevice -InstanceId $d.InstanceId -Confirm:$false
+}
+'@ | Out-File -Encoding ASCII -FilePath 'C:\CocoonNicAutoHeal.ps1' -Force
+    schtasks /create /tn CocoonNicAutoHeal `
+        /tr 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\CocoonNicAutoHeal.ps1' `
+        /sc minute /mo 1 /ru SYSTEM /rl HIGHEST /f | Out-Null
+}
+
 Write-Output "=== Remediation complete ==="
