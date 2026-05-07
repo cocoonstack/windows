@@ -22,6 +22,8 @@ An image produced from this repo is only considered valid for Cocoon if all of t
 - It acquires a DHCP lease from a plain `dnsmasq` bridge and reports hostname `COCOON-VM`.
 - `3389/tcp` accepts a real RDP authentication attempt.
 - `COM1` exposes a real SAC console after Cloud Hypervisor boot. A live `SAC>` prompt is the hard requirement; missing in-guest `ACPI\\PNP0501` enumeration is only a warning. `bcdedit /ems on` by itself is **not** sufficient.
+- The `Virtio Vsock STREAM` Winsock provider is registered (Address Family 40 in `netsh winsock show catalog`) and the `viosock` device is bound (`Get-PnpDevice` reports `Status=OK`). Required for `cocoon-agent`'s `AF_VSOCK` listener; `virtio-win-guest-tools.exe /S` does not register the WSP, so a separate `pnputil /add-driver viosock.inf /install` runs at firstboot.
+- The `CocoonNicAutoHeal` scheduled task is registered (1-minute, SYSTEM, HIGHEST) and `C:\CocoonNicAutoHeal.ps1` exists. Recovers chained-clone NDIS state where vm.restore leaves the NIC bound but unable to transmit.
 - A remote `shutdown /s /t 10` cleanly terminates the Cloud Hypervisor process.
 
 ## Pulling a pre-built image
