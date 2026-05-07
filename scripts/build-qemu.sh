@@ -216,6 +216,9 @@ cp -a /mnt/. "$WORKDIR/iso_src/"
 sudo umount /mnt
 chmod -R u+w "$WORKDIR/iso_src"
 cp "$ROOT_DIR/autounattend.xml" "$WORKDIR/iso_src/autounattend.xml"
+cp "$ROOT_DIR/scripts/install-cocoon-agent-bootstrap.ps1" "$WORKDIR/iso_src/install-cocoon-agent-bootstrap.ps1"
+cp "$ROOT_DIR/scripts/cocoon-nic-autoheal.ps1" "$WORKDIR/iso_src/cocoon-nic-autoheal.ps1"
+cp "$ROOT_DIR/scripts/setup-cocoon-nic-autoheal.ps1" "$WORKDIR/iso_src/setup-cocoon-nic-autoheal.ps1"
 xorriso -as mkisofs \
   -iso-level 3 \
   -J -joliet-long -R \

@@ -185,14 +185,13 @@ Check "virtio-win guest tools installed" ($null -ne $vgt)
 
 # --- viosock (virtio-vsock) driver: required for cocoon-agent's AF_VSOCK ---
 # virtio-win-guest-tools.exe /S installs viostor / NetKvm / balloon but skips
-# viosock; autounattend Order 52 runs pnputil for it. Two checks: hardware bind
-# (Get-PnpDevice) plus Winsock provider registration (catalog must list AF=40).
-$vsockDev = Get-PnpDevice -PresentOnly -ErrorAction SilentlyContinue |
-    Where-Object { $_.InstanceId -like '*VEN_1AF4*DEV_1053*' }
-Check "viosock device bound (Status=OK)" ($null -ne $vsockDev -and $vsockDev.Status -eq 'OK')
-
-$vsockCat = (netsh winsock show catalog 2>&1 | Out-String)
-Check "Virtio Vsock STREAM provider registered" ($vsockCat -match 'Virtio Vsock STREAM')
+# viosock; autounattend Order 52 runs pnputil for it. The build-time QEMU has
+# no vsock device, so the driver is in the store but unbound here — only check
+# that pnputil registered it. The Winsock catalog entry is registered by the
+# WSP service the first time the device binds, which happens automatically
+# under production CH (vsock cid is exposed on the cmdline).
+$vsockDriver = (& pnputil.exe /enum-drivers 2>&1 | Out-String) -match '(?ms)Original Name:\s+viosock\.inf'
+Check "viosock driver in driver store" $vsockDriver
 
 # --- NIC auto-heal scheduled task ---
 $autoheal = schtasks /query /tn CocoonNicAutoHeal /fo LIST 2>&1 | Out-String
@@ -200,8 +199,12 @@ Check "CocoonNicAutoHeal task registered" ($LASTEXITCODE -eq 0 -and $autoheal -m
 Check "C:\CocoonNicAutoHeal.ps1 present"  (Test-Path 'C:\CocoonNicAutoHeal.ps1')
 
 # --- cocoon-agent service ---
+# The build-time QEMU has no vsock device, so the agent can't bind there even
+# though the service is registered. Only check that the service is registered
+# with start=auto — production CH exposes a vsock cid and the service starts
+# at first boot.
 $cocoon = Get-Service -Name cocoon-agent -ErrorAction SilentlyContinue
-Check "cocoon-agent service running" ($null -ne $cocoon -and $cocoon.Status -eq 'Running')
+Check "cocoon-agent service registered (auto-start)" ($null -ne $cocoon -and $cocoon.StartType -eq 'Automatic')
 Check "cocoon-agent bootstrap present" (Test-Path 'C:\Scripts\install-cocoon-agent-bootstrap.ps1')
 $cocoonExe = "$env:ProgramFiles\Cocoon\cocoon-agent.exe"
 if (Test-Path $cocoonExe) {

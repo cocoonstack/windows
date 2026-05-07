@@ -2,18 +2,28 @@
 # from GitHub, verify SHA256, extract, run the bundled installer.
 #
 # To bump the agent: update $version + $expected together (release page's
-# checksums.txt has the canonical SHA256). The matching base64 block in
-# autounattend.xml Order 53 must be regenerated from this file in lockstep
-# or images will silently ship the old version.
+# checksums.txt has the canonical SHA256). The build script copies this file
+# to the install ISO root; autounattend.xml Order 53 invokes it from there
+# at firstboot. We also self-copy to C:\Scripts so remediate.ps1 can re-run
+# us against an already-installed image.
 
 $ErrorActionPreference = 'Stop'
 $ProgressPreference    = 'SilentlyContinue'
 
-$version  = '0.1.1'
+$version  = '0.1.2'
 $url      = "https://github.com/cocoonstack/cocoon-agent/releases/download/v$version/cocoon-agent_${version}_Windows_x86_64.zip"
-$expected = 'acd2e87c35947db4076f9fa1b91a3162f91061e5a863e75e5b032714efdc40ab'
+$expected = '97c4893ab692b3b2eac5bed0003871588a35898a995531e74f3312fa7e79ce05'
 $zip      = Join-Path $env:TEMP "cocoon-agent_${version}_Windows_x86_64.zip"
 $extract  = Join-Path $env:TEMP "cocoon-agent-${version}"
+
+# Self-copy to C:\Scripts so remediate.ps1 (and ad-hoc re-runs) can find us
+# without needing the install ISO mounted.
+$scriptsDir = 'C:\Scripts'
+$bootstrapDest = Join-Path $scriptsDir 'install-cocoon-agent-bootstrap.ps1'
+if (-not (Test-Path $scriptsDir)) { New-Item -ItemType Directory -Path $scriptsDir | Out-Null }
+if ($PSCommandPath -and (Test-Path $PSCommandPath) -and ((Resolve-Path $PSCommandPath).Path -ne (Resolve-Path -LiteralPath $bootstrapDest -ErrorAction SilentlyContinue).Path)) {
+    Copy-Item -Path $PSCommandPath -Destination $bootstrapDest -Force
+}
 
 # DHCP/DNS can take a few seconds to settle at firstboot.
 for ($i = 1; $i -le 5; $i++) {
