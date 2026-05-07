@@ -177,4 +177,16 @@ foreach ($d in (Get-PnpDevice -Class Net)) {
         /sc minute /mo 1 /ru SYSTEM /rl HIGHEST /f | Out-Null
 }
 
+# --- cocoon-agent service ---
+$cocoon = Get-Service -Name cocoon-agent -ErrorAction SilentlyContinue
+if ($null -eq $cocoon -or $cocoon.Status -ne 'Running') {
+    $bootstrap = 'C:\Scripts\install-cocoon-agent-bootstrap.ps1'
+    if (Test-Path $bootstrap) {
+        Write-Output "Re-running cocoon-agent bootstrap..."
+        & $bootstrap
+    } else {
+        Write-Output "WARN: cocoon-agent bootstrap missing at $bootstrap; service install requires re-running autounattend"
+    }
+}
+
 Write-Output "=== Remediation complete ==="

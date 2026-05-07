@@ -199,6 +199,16 @@ $autoheal = schtasks /query /tn CocoonNicAutoHeal /fo LIST 2>&1 | Out-String
 Check "CocoonNicAutoHeal task registered" ($LASTEXITCODE -eq 0 -and $autoheal -match 'CocoonNicAutoHeal')
 Check "C:\CocoonNicAutoHeal.ps1 present"  (Test-Path 'C:\CocoonNicAutoHeal.ps1')
 
+# --- cocoon-agent service ---
+$cocoon = Get-Service -Name cocoon-agent -ErrorAction SilentlyContinue
+Check "cocoon-agent service running" ($null -ne $cocoon -and $cocoon.Status -eq 'Running')
+Check "cocoon-agent bootstrap present" (Test-Path 'C:\Scripts\install-cocoon-agent-bootstrap.ps1')
+$cocoonExe = "$env:ProgramFiles\Cocoon\cocoon-agent.exe"
+if (Test-Path $cocoonExe) {
+    $ver = (& $cocoonExe --version 2>&1 | Out-String).Trim()
+    Write-Host "  cocoon-agent: $ver"
+}
+
 # --- Install marker ---
 Check "C:\install.success exists" (Test-Path C:\install.success)
 
