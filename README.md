@@ -400,7 +400,7 @@ The included [`autounattend.xml`](autounattend.xml) drives the install across th
 - **International-Core**: `InputLocale=0409:00000409` only. The component must be present here for Windows 11 25H2 OOBE to skip the country / keyboard selection screens.
 - **OOBE**: hides EULA, online account, wireless setup.
 - **User account**: local admin `cocoon` with auto-logon (password base64-encoded in XML).
-- **FirstLogonCommands**: 54 commands.
+- **FirstLogonCommands**: 55 commands.
 
 | Order  | Action                       | Notes |
 |--------|------------------------------|-------|
@@ -430,9 +430,10 @@ The included [`autounattend.xml`](autounattend.xml) drives the install across th
 | 47     | **Zero startup delay**       | `Explorer\Serialize\StartupDelayInMSec=0` |
 | 48-50  | **DWM tuning**               | No minimize animation, no drag full windows, ClearType font smoothing |
 | 51     | **Disable scheduled tasks**  | Compatibility Appraiser, ScheduledDefrag, DiskDiagnostic |
-| 52     | **NIC auto-heal task**       | Write `C:\CocoonNicAutoHeal.ps1` and register `CocoonNicAutoHeal` schtasks (every minute, SYSTEM, HIGHEST). Cycles all Net PnP devices to recover chained-clone NDIS state. |
-| 53     | **QuickEdit restore**        | Restore QuickEdit after install |
-| 54     | **Install marker**           | `cmd /c "echo %date% %time% > C:\install.success"` |
+| 52     | **viosock driver**           | `pnputil /add-driver D:\viosock\w11\amd64\viosock.inf /install` (D: + E: + standard + attestation paths). Required for cocoon-agent's `AF_VSOCK` listener — registers the `Virtio Vsock STREAM` Winsock provider (Address Family 40, `viosocklib.dll`). `virtio-win-guest-tools.exe /S` (Order 21) does not install this driver. |
+| 53     | **NIC auto-heal task**       | Write `C:\CocoonNicAutoHeal.ps1` and register `CocoonNicAutoHeal` schtasks (every minute, SYSTEM, HIGHEST). Cycles all Net PnP devices to recover chained-clone NDIS state. |
+| 54     | **QuickEdit restore**        | Restore QuickEdit after install |
+| 55     | **Install marker**           | `cmd /c "echo %date% %time% > C:\install.success"` |
 
 > **Note on WinRM persistence**: `Enable-PSRemoting` + the `AllowUnencrypted`/`Basic` WSMan settings set by orders 14-16 do not always survive the very first post-install reboot on Win11 25H2. `remediate.ps1` re-applies them from the same deterministic settings, and the CI loop reboots → verifies → remediates → re-verifies to make the final image idempotent.
 
