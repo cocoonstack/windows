@@ -10,6 +10,8 @@ Contents:
 - `scripts/build-qemu.sh` — reproducible local QEMU build, with one rolling screenshot file and a bounded first-boot settle loop
 - `scripts/verify.ps1` + `scripts/remediate.ps1` — in-guest verification / remediation loop
 - `scripts/firstboot-state.ps1` — lightweight first-boot probe used to wait for concrete SAC runtime components before verification
+- `scripts/cocoon-nic-autoheal.ps1` — body of the `CocoonNicAutoHeal` scheduled task; cycles every Net PnP device once a minute to recover chained-clone guests where vm.restore leaves the NIC bound but unable to transmit
+- `scripts/install-cocoon-agent-bootstrap.ps1` — downloads the pinned `cocoon-agent` Windows release from GitHub, verifies SHA256, runs the bundled installer; lands at `C:\Scripts\` so `remediate.ps1` can re-invoke it
 - `scripts/verify-ch.sh` + `scripts/sac_probe.py` — Cloud Hypervisor runtime validation for DHCP, RDP, real SAC, and clean shutdown
 - `.github/workflows/build.yml` — headless QEMU/KVM build on `ubuntu-latest`, publishes to GHCR via ORAS
 
@@ -21,6 +23,9 @@ An image produced from this repo is only considered valid for Cocoon if all of t
 - It acquires a DHCP lease from a plain `dnsmasq` bridge and reports hostname `COCOON-VM`.
 - `3389/tcp` accepts a real RDP authentication attempt.
 - `COM1` exposes a real SAC console after Cloud Hypervisor boot. A live `SAC>` prompt is the hard requirement; missing in-guest `ACPI\\PNP0501` enumeration is only a warning. `bcdedit /ems on` by itself is **not** sufficient.
+- The `Virtio Vsock STREAM` Winsock provider is registered (Address Family 40 in `netsh winsock show catalog`) and the `viosock` device is bound (`Get-PnpDevice` reports `Status=OK`). Required for `cocoon-agent`'s `AF_VSOCK` listener; `virtio-win-guest-tools.exe /S` does not register the WSP, so a separate `pnputil /add-driver viosock.inf /install` runs at firstboot.
+- The `cocoon-agent` Windows service is installed (`Get-Service cocoon-agent`) and running, listening on vsock port 1024. Pinned to a specific `cocoon-agent` release (currently v0.1.1); bumping requires a coordinated update of `scripts/install-cocoon-agent-bootstrap.ps1` + the matching base64 in `autounattend.xml` Order 53.
+- The `CocoonNicAutoHeal` scheduled task is registered (1-minute, SYSTEM, HIGHEST) and `C:\CocoonNicAutoHeal.ps1` exists. Recovers chained-clone NDIS state where vm.restore leaves the NIC bound but unable to transmit.
 - A remote `shutdown /s /t 10` cleanly terminates the Cloud Hypervisor process.
 
 ## Pulling a pre-built image
@@ -399,7 +404,7 @@ The included [`autounattend.xml`](autounattend.xml) drives the install across th
 - **International-Core**: `InputLocale=0409:00000409` only. The component must be present here for Windows 11 25H2 OOBE to skip the country / keyboard selection screens.
 - **OOBE**: hides EULA, online account, wireless setup.
 - **User account**: local admin `cocoon` with auto-logon (password base64-encoded in XML).
-- **FirstLogonCommands**: 53 commands.
+- **FirstLogonCommands**: 56 commands.
 
 | Order  | Action                       | Notes |
 |--------|------------------------------|-------|
@@ -429,8 +434,11 @@ The included [`autounattend.xml`](autounattend.xml) drives the install across th
 | 47     | **Zero startup delay**       | `Explorer\Serialize\StartupDelayInMSec=0` |
 | 48-50  | **DWM tuning**               | No minimize animation, no drag full windows, ClearType font smoothing |
 | 51     | **Disable scheduled tasks**  | Compatibility Appraiser, ScheduledDefrag, DiskDiagnostic |
-| 52     | **QuickEdit restore**        | Restore QuickEdit after install |
-| 53     | **Install marker**           | `cmd /c "echo %date% %time% > C:\install.success"` |
+| 52     | **viosock driver**           | `pnputil /add-driver D:\viosock\w11\amd64\viosock.inf /install` (D: + E: + standard + attestation paths). Required for cocoon-agent's `AF_VSOCK` listener — registers the `Virtio Vsock STREAM` Winsock provider (Address Family 40, `viosocklib.dll`). `virtio-win-guest-tools.exe /S` (Order 21) does not install this driver. |
+| 53     | **cocoon-agent install**     | Download pinned `cocoon-agent_v0.1.1_Windows_x86_64.zip` from GitHub Releases, verify SHA256, run bundled `install-cocoon-agent.ps1` (registers `cocoon-agent` Windows service: LocalSystem, auto-start, restart-on-crash, vsock port 1024). Bootstrap dropped at `C:\Scripts\install-cocoon-agent-bootstrap.ps1` for `remediate.ps1` re-invoke. |
+| 54     | **NIC auto-heal task**       | Write `C:\CocoonNicAutoHeal.ps1` and register `CocoonNicAutoHeal` schtasks (every minute, SYSTEM, HIGHEST). Cycles all Net PnP devices to recover chained-clone NDIS state. |
+| 55     | **QuickEdit restore**        | Restore QuickEdit after install |
+| 56     | **Install marker**           | `cmd /c "echo %date% %time% > C:\install.success"` |
 
 > **Note on WinRM persistence**: `Enable-PSRemoting` + the `AllowUnencrypted`/`Basic` WSMan settings set by orders 14-16 do not always survive the very first post-install reboot on Win11 25H2. `remediate.ps1` re-applies them from the same deterministic settings, and the CI loop reboots → verifies → remediates → re-verifies to make the final image idempotent.
 

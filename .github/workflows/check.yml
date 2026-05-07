@@ -1,0 +1,15 @@
+name: Checks
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  base64-drift:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify autounattend base64 ↔ standalone .ps1
+        run: python3 scripts/check-base64-drift.py

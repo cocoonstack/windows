@@ -183,6 +183,32 @@ $vgt = Get-ItemProperty "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninsta
     Where-Object { $_.DisplayName -match 'Virtio-win' }
 Check "virtio-win guest tools installed" ($null -ne $vgt)
 
+# --- viosock (virtio-vsock) driver: required for cocoon-agent's AF_VSOCK ---
+# virtio-win-guest-tools.exe /S installs viostor / NetKvm / balloon but skips
+# viosock; autounattend Order 52 runs pnputil for it. Two checks: hardware bind
+# (Get-PnpDevice) plus Winsock provider registration (catalog must list AF=40).
+$vsockDev = Get-PnpDevice -PresentOnly -ErrorAction SilentlyContinue |
+    Where-Object { $_.InstanceId -like '*VEN_1AF4*DEV_1053*' }
+Check "viosock device bound (Status=OK)" ($null -ne $vsockDev -and $vsockDev.Status -eq 'OK')
+
+$vsockCat = (netsh winsock show catalog 2>&1 | Out-String)
+Check "Virtio Vsock STREAM provider registered" ($vsockCat -match 'Virtio Vsock STREAM')
+
+# --- NIC auto-heal scheduled task ---
+$autoheal = schtasks /query /tn CocoonNicAutoHeal /fo LIST 2>&1 | Out-String
+Check "CocoonNicAutoHeal task registered" ($LASTEXITCODE -eq 0 -and $autoheal -match 'CocoonNicAutoHeal')
+Check "C:\CocoonNicAutoHeal.ps1 present"  (Test-Path 'C:\CocoonNicAutoHeal.ps1')
+
+# --- cocoon-agent service ---
+$cocoon = Get-Service -Name cocoon-agent -ErrorAction SilentlyContinue
+Check "cocoon-agent service running" ($null -ne $cocoon -and $cocoon.Status -eq 'Running')
+Check "cocoon-agent bootstrap present" (Test-Path 'C:\Scripts\install-cocoon-agent-bootstrap.ps1')
+$cocoonExe = "$env:ProgramFiles\Cocoon\cocoon-agent.exe"
+if (Test-Path $cocoonExe) {
+    $ver = (& $cocoonExe --version 2>&1 | Out-String).Trim()
+    Write-Host "  cocoon-agent: $ver"
+}
+
 # --- Install marker ---
 Check "C:\install.success exists" (Test-Path C:\install.success)
 
