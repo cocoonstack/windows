@@ -10,6 +10,7 @@ Contents:
 - `scripts/build-qemu.sh` — reproducible local QEMU build, with one rolling screenshot file and a bounded first-boot settle loop
 - `scripts/verify.ps1` + `scripts/remediate.ps1` — in-guest verification / remediation loop
 - `scripts/firstboot-state.ps1` — lightweight first-boot probe used to wait for concrete SAC runtime components before verification
+- `scripts/cocoon-nic-autoheal.ps1` — body of the `CocoonNicAutoHeal` scheduled task; cycles every Net PnP device once a minute to recover chained-clone guests where vm.restore leaves the NIC bound but unable to transmit
 - `scripts/verify-ch.sh` + `scripts/sac_probe.py` — Cloud Hypervisor runtime validation for DHCP, RDP, real SAC, and clean shutdown
 - `.github/workflows/build.yml` — headless QEMU/KVM build on `ubuntu-latest`, publishes to GHCR via ORAS
 
@@ -399,7 +400,7 @@ The included [`autounattend.xml`](autounattend.xml) drives the install across th
 - **International-Core**: `InputLocale=0409:00000409` only. The component must be present here for Windows 11 25H2 OOBE to skip the country / keyboard selection screens.
 - **OOBE**: hides EULA, online account, wireless setup.
 - **User account**: local admin `cocoon` with auto-logon (password base64-encoded in XML).
-- **FirstLogonCommands**: 53 commands.
+- **FirstLogonCommands**: 54 commands.
 
 | Order  | Action                       | Notes |
 |--------|------------------------------|-------|
@@ -429,8 +430,9 @@ The included [`autounattend.xml`](autounattend.xml) drives the install across th
 | 47     | **Zero startup delay**       | `Explorer\Serialize\StartupDelayInMSec=0` |
 | 48-50  | **DWM tuning**               | No minimize animation, no drag full windows, ClearType font smoothing |
 | 51     | **Disable scheduled tasks**  | Compatibility Appraiser, ScheduledDefrag, DiskDiagnostic |
-| 52     | **QuickEdit restore**        | Restore QuickEdit after install |
-| 53     | **Install marker**           | `cmd /c "echo %date% %time% > C:\install.success"` |
+| 52     | **NIC auto-heal task**       | Write `C:\CocoonNicAutoHeal.ps1` and register `CocoonNicAutoHeal` schtasks (every minute, SYSTEM, HIGHEST). Cycles all Net PnP devices to recover chained-clone NDIS state. |
+| 53     | **QuickEdit restore**        | Restore QuickEdit after install |
+| 54     | **Install marker**           | `cmd /c "echo %date% %time% > C:\install.success"` |
 
 > **Note on WinRM persistence**: `Enable-PSRemoting` + the `AllowUnencrypted`/`Basic` WSMan settings set by orders 14-16 do not always survive the very first post-install reboot on Win11 25H2. `remediate.ps1` re-applies them from the same deterministic settings, and the CI loop reboots → verifies → remediates → re-verifies to make the final image idempotent.
 

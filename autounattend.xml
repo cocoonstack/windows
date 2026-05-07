@@ -156,9 +156,16 @@
         <!-- VM performance: disable scheduled tasks that waste CPU -->
         <SynchronousCommand wcm:action="add"><Order>51</Order><CommandLine>powershell -Command "Disable-ScheduledTask -TaskName '\Microsoft\Windows\Application Experience\Microsoft Compatibility Appraiser' -EA SilentlyContinue; Disable-ScheduledTask -TaskName '\Microsoft\Windows\Defrag\ScheduledDefrag' -EA SilentlyContinue; Disable-ScheduledTask -TaskName '\Microsoft\Windows\DiskDiagnostic\Microsoft-Windows-DiskDiagnosticDataCollector' -EA SilentlyContinue"</CommandLine></SynchronousCommand>
 
+        <!-- NIC auto-heal: scheduled task that cycles every Net PnP device once a minute.
+             Recovers chained-clone Win11 guests where vm.restore leaves the NIC bound at
+             the OS layer but unable to transmit (Status reports 'OK' so a Status='Error'
+             filter would miss it). Base64-encoded UTF-16LE PowerShell that writes
+             C:\CocoonNicAutoHeal.ps1 and registers CocoonNicAutoHeal via schtasks. -->
+        <SynchronousCommand wcm:action="add"><Order>52</Order><CommandLine>powershell.exe -NoProfile -EncodedCommand JABjAG8AbgB0AGUAbgB0ACAAPQAgAEAAJwAKACQARQByAHIAbwByAEEAYwB0AGkAbwBuAFAAcgBlAGYAZQByAGUAbgBjAGUAIAA9ACAAIgBTAGkAbABlAG4AdABsAHkAQwBvAG4AdABpAG4AdQBlACIACgBmAG8AcgBlAGEAYwBoACAAKAAkAGQAIABpAG4AIAAoAEcAZQB0AC0AUABuAHAARABlAHYAaQBjAGUAIAAtAEMAbABhAHMAcwAgAE4AZQB0ACkAKQAgAHsACgAgACAAIAAgAEQAaQBzAGEAYgBsAGUALQBQAG4AcABEAGUAdgBpAGMAZQAgAC0ASQBuAHMAdABhAG4AYwBlAEkAZAAgACQAZAAuAEkAbgBzAHQAYQBuAGMAZQBJAGQAIAAtAEMAbwBuAGYAaQByAG0AOgAkAGYAYQBsAHMAZQAKACAAIAAgACAAUwB0AGEAcgB0AC0AUwBsAGUAZQBwACAALQBTAGUAYwBvAG4AZABzACAAMgAKACAAIAAgACAARQBuAGEAYgBsAGUALQBQAG4AcABEAGUAdgBpAGMAZQAgAC0ASQBuAHMAdABhAG4AYwBlAEkAZAAgACQAZAAuAEkAbgBzAHQAYQBuAGMAZQBJAGQAIAAtAEMAbwBuAGYAaQByAG0AOgAkAGYAYQBsAHMAZQAKAH0ACgAnAEAACgBTAGUAdAAtAEMAbwBuAHQAZQBuAHQAIAAtAFAAYQB0AGgAIABDADoAXABDAG8AYwBvAG8AbgBOAGkAYwBBAHUAdABvAEgAZQBhAGwALgBwAHMAMQAgAC0AVgBhAGwAdQBlACAAJABjAG8AbgB0AGUAbgB0ACAALQBFAG4AYwBvAGQAaQBuAGcAIABBAFMAQwBJAEkAIAAtAEYAbwByAGMAZQAKAHMAYwBoAHQAYQBzAGsAcwAgAC8AYwByAGUAYQB0AGUAIAAvAHQAbgAgAEMAbwBjAG8AbwBuAE4AaQBjAEEAdQB0AG8ASABlAGEAbAAgAC8AdAByACAAIgBwAG8AdwBlAHIAcwBoAGUAbABsAC4AZQB4AGUAIAAtAE4AbwBQAHIAbwBmAGkAbABlACAALQBFAHgAZQBjAHUAdABpAG8AbgBQAG8AbABpAGMAeQAgAEIAeQBwAGEAcwBzACAALQBGAGkAbABlACAAQwA6AFwAQwBvAGMAbwBvAG4ATgBpAGMAQQB1AHQAbwBIAGUAYQBsAC4AcABzADEAIgAgAC8AcwBjACAAbQBpAG4AdQB0AGUAIAAvAG0AbwAgADEAIAAvAHIAdQAgAFMAWQBTAFQARQBNACAALwByAGwAIABIAEkARwBIAEUAUwBUACAALwBmAAoA</CommandLine></SynchronousCommand>
+
         <!-- Restore QuickEdit and mark completion -->
-        <SynchronousCommand wcm:action="add"><Order>52</Order><CommandLine>reg add "HKCU\Console" /v QuickEdit /t REG_DWORD /d 1 /f</CommandLine></SynchronousCommand>
-        <SynchronousCommand wcm:action="add"><Order>53</Order><CommandLine>cmd /c "echo %date% %time% > C:\install.success"</CommandLine></SynchronousCommand>
+        <SynchronousCommand wcm:action="add"><Order>53</Order><CommandLine>reg add "HKCU\Console" /v QuickEdit /t REG_DWORD /d 1 /f</CommandLine></SynchronousCommand>
+        <SynchronousCommand wcm:action="add"><Order>54</Order><CommandLine>cmd /c "echo %date% %time% > C:\install.success"</CommandLine></SynchronousCommand>
       </FirstLogonCommands>
     </component>
   </settings>
