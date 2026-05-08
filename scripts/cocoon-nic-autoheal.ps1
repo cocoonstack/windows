@@ -1,18 +1,20 @@
-# Cycle a Net PnP device only when its default gateway is unreachable —
-# the chained-clone NIC-bound-no-traffic state shows up as a failed ICMP
-# to the gateway even though Get-PnpDevice still reports Status=OK. Skip
-# adapters whose gateway answers; cycling a healthy NIC drops every host
-# session through it (SSH, RDP, etc) for several seconds.
+# If no default-route gateway answers ICMP, cycle every Present Net PnP
+# device. The chained-clone failure mode often leaves the route table
+# empty entirely, so a per-adapter Status check misses it. Skipping the
+# cycle when any gateway answers preserves SSH/RDP sessions on healthy
+# guests (the 1-min schtasks cadence would otherwise blip them).
 $ErrorActionPreference = "SilentlyContinue"
 $ping = New-Object System.Net.NetworkInformation.Ping
-foreach ($adapter in (Get-NetAdapter | Where-Object Status -eq 'Up')) {
-    $gw = (Get-NetRoute -InterfaceIndex $adapter.ifIndex -DestinationPrefix '0.0.0.0/0' | Select-Object -First 1).NextHop
-    if (-not $gw -or $gw -eq '0.0.0.0') { continue }
+$gateways = (Get-NetRoute -DestinationPrefix '0.0.0.0/0' -EA SilentlyContinue |
+    Where-Object NextHop -ne '0.0.0.0').NextHop | Sort-Object -Unique
+$healthy = $false
+foreach ($gw in $gateways) {
     $reply = $ping.Send($gw, 2000)
-    if ($reply -and $reply.Status -eq 'Success') { continue }
-    $pnp = Get-PnpDevice -PresentOnly -Class Net | Where-Object InstanceId -eq $adapter.PnpDeviceID
-    if (-not $pnp) { continue }
-    Disable-PnpDevice -InstanceId $pnp.InstanceId -Confirm:$false
+    if ($reply -and $reply.Status -eq 'Success') { $healthy = $true; break }
+}
+if ($healthy) { return }
+foreach ($d in (Get-PnpDevice -Class Net -PresentOnly)) {
+    Disable-PnpDevice -InstanceId $d.InstanceId -Confirm:$false
     Start-Sleep -Seconds 2
-    Enable-PnpDevice -InstanceId $pnp.InstanceId -Confirm:$false
+    Enable-PnpDevice -InstanceId $d.InstanceId -Confirm:$false
 }

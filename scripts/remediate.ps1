@@ -163,18 +163,13 @@ if ($vsockCat -notmatch 'Virtio Vsock STREAM') {
 # --- NIC auto-heal task ---
 $autoheal = schtasks /query /tn CocoonNicAutoHeal 2>&1 | Out-String
 if ($LASTEXITCODE -ne 0) {
-    Write-Output "Re-creating CocoonNicAutoHeal task..."
-    @'
-$ErrorActionPreference = "SilentlyContinue"
-foreach ($d in (Get-PnpDevice -Class Net)) {
-    Disable-PnpDevice -InstanceId $d.InstanceId -Confirm:$false
-    Start-Sleep -Seconds 2
-    Enable-PnpDevice -InstanceId $d.InstanceId -Confirm:$false
-}
-'@ | Out-File -Encoding ASCII -FilePath 'C:\CocoonNicAutoHeal.ps1' -Force
-    schtasks /create /tn CocoonNicAutoHeal `
-        /tr 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\CocoonNicAutoHeal.ps1' `
-        /sc minute /mo 1 /ru SYSTEM /rl HIGHEST /f | Out-Null
+    $setup = 'C:\Scripts\setup-cocoon-nic-autoheal.ps1'
+    if (Test-Path $setup) {
+        Write-Output "Re-running setup-cocoon-nic-autoheal..."
+        & $setup
+    } else {
+        Write-Output "WARN: setup-cocoon-nic-autoheal missing at $setup; task install requires re-running autounattend"
+    }
 }
 
 # --- cocoon-agent service ---
