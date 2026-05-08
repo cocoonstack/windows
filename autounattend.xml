@@ -168,7 +168,7 @@
 
         <!-- cocoon-agent install: invoke the bootstrap .ps1 from the install
              ISO root (placed there by build-qemu.sh at repack time). It pulls
-             the pinned v0.1.3 release from GitHub, verifies SHA256, and runs
+             the pinned v0.1.1 release from GitHub, verifies SHA256, and runs
              the bundled install-cocoon-agent.ps1 to register the cocoon-agent
              service (LocalSystem, auto-start, restart-on-crash). FirstLogon
              SynchronousCommand CommandLine has a tight length limit; inlining
