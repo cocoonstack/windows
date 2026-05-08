@@ -4,10 +4,12 @@
 # adapters whose gateway answers; cycling a healthy NIC drops every host
 # session through it (SSH, RDP, etc) for several seconds.
 $ErrorActionPreference = "SilentlyContinue"
+$ping = New-Object System.Net.NetworkInformation.Ping
 foreach ($adapter in (Get-NetAdapter | Where-Object Status -eq 'Up')) {
     $gw = (Get-NetRoute -InterfaceIndex $adapter.ifIndex -DestinationPrefix '0.0.0.0/0' | Select-Object -First 1).NextHop
     if (-not $gw -or $gw -eq '0.0.0.0') { continue }
-    if (Test-Connection -ComputerName $gw -Count 1 -Quiet -TimeoutSeconds 2) { continue }
+    $reply = $ping.Send($gw, 2000)
+    if ($reply -and $reply.Status -eq 'Success') { continue }
     $pnp = Get-PnpDevice -PresentOnly -Class Net | Where-Object InstanceId -eq $adapter.PnpDeviceID
     if (-not $pnp) { continue }
     Disable-PnpDevice -InstanceId $pnp.InstanceId -Confirm:$false
