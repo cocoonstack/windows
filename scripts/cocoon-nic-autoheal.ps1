@@ -28,8 +28,10 @@ foreach ($a in $adapters) {
 if (-not $anyHealthy -and $toCycle.Count -eq 0) {
     $toCycle = $pnpByPnpId.Values
 }
-foreach ($d in $toCycle) {
-    Disable-PnpDevice -InstanceId $d.InstanceId -Confirm:$false
-    Start-Sleep -Seconds 2
-    Enable-PnpDevice -InstanceId $d.InstanceId -Confirm:$false
+# Pipe the batch through cmdlet once each — matches the cocoon clone hint
+# form. PnP cmdlets process the batch concurrently, avoiding the per-device
+# disable/sleep/enable serialization in older revisions of this script.
+if ($toCycle.Count -gt 0) {
+    $toCycle | Disable-PnpDevice -Confirm:$false
+    $toCycle | Enable-PnpDevice -Confirm:$false
 }
