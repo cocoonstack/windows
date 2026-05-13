@@ -10,9 +10,9 @@
 $ErrorActionPreference = 'Stop'
 $ProgressPreference    = 'SilentlyContinue'
 
-$version  = '0.1.2'
+$version  = '0.1.3'
 $url      = "https://github.com/cocoonstack/cocoon-agent/releases/download/v$version/cocoon-agent_${version}_Windows_x86_64.zip"
-$expected = 'a461b4bbf8111bb4cb4ebd70e537cf6555c1f643fb303e4b57abfb35204c8824'
+$expected = '85bf333638c25a5288b47a95b364f2d7e8cd9bcc0ee1fe4efe6688eb5debb407'
 $zip      = Join-Path $env:TEMP "cocoon-agent_${version}_Windows_x86_64.zip"
 $extract  = Join-Path $env:TEMP "cocoon-agent-${version}"
 
