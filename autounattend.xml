@@ -186,7 +186,9 @@
 
         <!-- Restore QuickEdit and mark completion -->
         <SynchronousCommand wcm:action="add"><Order>55</Order><CommandLine>reg add "HKCU\Console" /v QuickEdit /t REG_DWORD /d 1 /f</CommandLine></SynchronousCommand>
-        <SynchronousCommand wcm:action="add"><Order>56</Order><CommandLine>cmd /c "echo %date% %time% > C:\install.success"</CommandLine></SynchronousCommand>
+        <!-- cocoon is the AutoLogon account; without this its password expires on the default ~42d policy and breaks AutoLogon + the agent. -->
+        <SynchronousCommand wcm:action="add"><Order>56</Order><CommandLine>powershell -Command "Set-LocalUser -Name cocoon -PasswordNeverExpires $true"</CommandLine></SynchronousCommand>
+        <SynchronousCommand wcm:action="add"><Order>57</Order><CommandLine>cmd /c "echo %date% %time% > C:\install.success"</CommandLine></SynchronousCommand>
       </FirstLogonCommands>
     </component>
   </settings>
