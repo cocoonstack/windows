@@ -199,14 +199,25 @@ rm -f \
   "$WORKDIR/post-reboot-verify.log" \
   "$WORKDIR/remediate.log"
 
+# The Windows ISO is ~6.7GB off a signed CDN that truncates mid-transfer
+# (curl 18). --retry-all-errors retries that, -C - resumes (Azure blob honors
+# Range), and --speed-time turns a stalled socket into a retriable error.
+download_iso() {
+  curl -fL --retry 8 --retry-delay 5 --retry-all-errors -C - \
+    --connect-timeout 30 --speed-limit 2048 --speed-time 60 \
+    -o "$2" "$1"
+}
+
 if [[ ! -f "$WORKDIR/windows-orig.iso" ]]; then
   log "downloading Windows ISO"
-  curl -fL --retry 3 --retry-delay 5 -o "$WORKDIR/windows-orig.iso" "$WINDOWS_ISO_URL"
+  download_iso "$WINDOWS_ISO_URL" "$WORKDIR/windows-orig.iso"
+  sz=$(stat -c%s "$WORKDIR/windows-orig.iso")
+  [[ "$sz" -gt 5000000000 ]] || { echo "::error::Windows ISO truncated ($sz bytes)"; exit 1; }
 fi
 
 if [[ ! -f "$WORKDIR/virtio-win.iso" ]]; then
   log "downloading virtio-win ISO"
-  curl -fL --retry 3 --retry-delay 5 -o "$WORKDIR/virtio-win.iso" "$VIRTIO_WIN_URL"
+  download_iso "$VIRTIO_WIN_URL" "$WORKDIR/virtio-win.iso"
 fi
 
 log "repacking Windows ISO with autounattend.xml"
