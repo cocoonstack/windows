@@ -154,7 +154,7 @@ Install patched binaries:
 
 ```bash
 curl -fsSL -o /usr/local/bin/cloud-hypervisor \
-  https://github.com/cocoonstack/cloud-hypervisor/releases/download/dev/cloud-hypervisor
+  https://github.com/cocoonstack/cloud-hypervisor/releases/download/dev/cloud-hypervisor-x86_64
 chmod +x /usr/local/bin/cloud-hypervisor
 
 curl -fsSL -o /usr/local/share/cloud-hypervisor/CLOUDHV.fd \
