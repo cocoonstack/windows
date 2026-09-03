@@ -26,7 +26,7 @@ env:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 180
+    timeout-minutes: 330
     permissions:
       contents: read
       packages: write

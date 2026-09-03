@@ -293,7 +293,7 @@ update_screenshot >"$ARTIFACT_DIR/screenshot.log" 2>&1 &
 SCREENSHOT_PID=$!
 
 log "waiting for install.success"
-MAX_WAIT=7200
+MAX_WAIT=14400
 ELAPSED=0
 LAST_DISK=0
 STALL_START=0
