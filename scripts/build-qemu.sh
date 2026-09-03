@@ -296,7 +296,8 @@ log "waiting for install.success"
 MAX_WAIT=14400
 ELAPSED=0
 LAST_DISK=0
-STALL_START=0
+LAST_SCREEN=""
+SCREEN_STALL_START=0
 RESET_DONE=0
 while (( ELAPSED < MAX_WAIT )); do
   sleep 60
@@ -313,20 +314,25 @@ while (( ELAPSED < MAX_WAIT )); do
     break
   fi
 
-  if [[ "$DISK_K" -gt 5242880 && "$DISK_K" -eq "$LAST_DISK" ]]; then
-    if [[ "$STALL_START" -eq 0 ]]; then
-      STALL_START=$ELAPSED
+  # Setup keeps the disk quiet for long stretches on a slow runner, so a hang is a screen that stops changing, and only WinPE is reset
+  if (( ELAPSED % 300 == 0 )); then
+    echo "screendump $WORKDIR/stall.ppm" | nc -w 1 -q 1 127.0.0.1 "$MONITOR_PORT" >/dev/null 2>&1 || true
+    SCREEN=$(sha256sum "$WORKDIR/stall.ppm" 2>/dev/null | cut -c1-16)
+    if [[ -n "$SCREEN" && "$SCREEN" == "$LAST_SCREEN" ]]; then
+      if [[ "$SCREEN_STALL_START" -eq 0 ]]; then
+        SCREEN_STALL_START=$ELAPSED
+      fi
+      if (( ELAPSED - SCREEN_STALL_START >= 1800 )) && (( RESET_DONE == 0 )) \
+          && ! grep -q 'Windows Boot Manager' "$ARTIFACT_DIR/qemu-serial.log"; then
+        log "screen unchanged for 30min in WinPE, issuing QMP system_reset"
+        qmp_reset | tee -a "$ARTIFACT_DIR/qmp-reset.log"
+        RESET_DONE=1
+        SCREEN_STALL_START=0
+      fi
+    else
+      SCREEN_STALL_START=0
     fi
-    # a reset only rescues a hung WinPE; after Windows Boot Manager a quiet disk is Setup at work and a reset restarts the wipe-and-install
-    if (( ELAPSED - STALL_START >= 1200 )) && (( RESET_DONE == 0 )) \
-        && ! grep -q 'Windows Boot Manager' "$ARTIFACT_DIR/qemu-serial.log"; then
-      log "disk stalled for 20min in WinPE, issuing QMP system_reset"
-      qmp_reset | tee -a "$ARTIFACT_DIR/qmp-reset.log"
-      RESET_DONE=1
-      STALL_START=0
-    fi
-  else
-    STALL_START=0
+    LAST_SCREEN=$SCREEN
   fi
 
   LAST_DISK=$DISK_K
