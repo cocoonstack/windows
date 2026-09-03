@@ -297,6 +297,7 @@ MAX_WAIT=14400
 ELAPSED=0
 LAST_DISK=0
 STALL_START=0
+RESET_DONE=0
 while (( ELAPSED < MAX_WAIT )); do
   sleep 60
   ELAPSED=$((ELAPSED + 60))
@@ -307,7 +308,7 @@ while (( ELAPSED < MAX_WAIT )); do
   DISK_K=$(du -k "$WORKDIR/$QCOW2_NAME" | cut -f1)
   DISK_H=$(du -sh "$WORKDIR/$QCOW2_NAME" | cut -f1)
   if sshpass -p "$WIN_PASS" ssh "${ssh_opts[@]}" -p "$SSH_PORT" cocoon@localhost \
-      "if exist C:\\install.success echo READY" 2>/dev/null | tee -a "$WORKDIR/install.success.check.log" | grep -q READY; then
+      "if exist C:\\install.success echo READY" 2>&1 | tee -a "$ARTIFACT_DIR/install.success.check.log" | grep -q READY; then
     log "install.success detected at ${ELAPSED}s (disk=${DISK_H})"
     break
   fi
@@ -316,9 +317,12 @@ while (( ELAPSED < MAX_WAIT )); do
     if [[ "$STALL_START" -eq 0 ]]; then
       STALL_START=$ELAPSED
     fi
-    if (( ELAPSED - STALL_START >= 1200 )); then
-      log "disk stalled for 20min, issuing QMP system_reset"
+    # a reset only rescues a hung WinPE; after Windows Boot Manager a quiet disk is Setup at work and a reset restarts the wipe-and-install
+    if (( ELAPSED - STALL_START >= 1200 )) && (( RESET_DONE == 0 )) \
+        && ! grep -q 'Windows Boot Manager' "$ARTIFACT_DIR/qemu-serial.log"; then
+      log "disk stalled for 20min in WinPE, issuing QMP system_reset"
       qmp_reset | tee -a "$ARTIFACT_DIR/qmp-reset.log"
+      RESET_DONE=1
       STALL_START=0
     fi
   else
