@@ -10,7 +10,7 @@ Contents:
 - `scripts/build-qemu.sh` — reproducible local QEMU build, with one rolling screenshot file and a bounded first-boot settle loop
 - `scripts/verify.ps1` + `scripts/remediate.ps1` — in-guest verification / remediation loop
 - `scripts/firstboot-state.ps1` — lightweight first-boot probe used to wait for concrete SAC runtime components before verification
-- `scripts/cocoon-nic-autoheal.ps1` — body of the `CocoonNicAutoHeal` scheduled task; cycles every Net PnP device once a minute to recover chained-clone guests where vm.restore leaves the NIC bound but unable to transmit
+- `scripts/cocoon-nic-autoheal.ps1` — body of the `CocoonNicAutoHeal` scheduled task; once a minute, cycles one at a time each NIC whose default gateway does not answer, or every NIC when none has a reachable gateway, to recover chained-clone guests where vm.restore leaves the NIC bound but unable to transmit
 - `scripts/install-cocoon-agent-bootstrap.ps1` — downloads the pinned `cocoon-agent` Windows release from GitHub, verifies SHA256, runs the bundled installer; lands at `C:\Scripts\` so `remediate.ps1` can re-invoke it
 - `scripts/verify-ch.sh` + `scripts/sac_probe.py` — Cloud Hypervisor runtime validation for DHCP, RDP, real SAC, and clean shutdown
 - `.github/workflows/build.yml` — headless QEMU/KVM build on `ubuntu-latest`, publishes to GHCR via ORAS
