@@ -28,10 +28,8 @@ foreach ($a in $adapters) {
 if (-not $anyHealthy -and $toCycle.Count -eq 0) {
     $toCycle = $pnpByPnpId.Values
 }
-# Pipe the batch through cmdlet once each — matches the cocoon clone hint
-# form. PnP cmdlets process the batch concurrently, avoiding the per-device
-# disable/sleep/enable serialization in older revisions of this script.
-if ($toCycle.Count -gt 0) {
-    $toCycle | Disable-PnpDevice -Confirm:$false
-    $toCycle | Enable-PnpDevice -Confirm:$false
+# One device at a time: a batch re-enable moves BARs into a range Cloud Hypervisor still holds for another disabled NIC, which leaves it in Code 10.
+foreach ($d in $toCycle) {
+    $d | Disable-PnpDevice -Confirm:$false
+    $d | Enable-PnpDevice -Confirm:$false
 }
