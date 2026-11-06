@@ -10,7 +10,7 @@ on:
       version_tag:
         description: "Version tag for the image"
         required: true
-        default: "25h2"
+        default: "26h2"
       disk_size:
         description: "Disk image size"
         required: true
@@ -19,7 +19,7 @@ on:
 env:
   VIRTIO_WIN_URL: "https://fedorapeople.org/groups/virt/virtio-win/direct-downloads/archive-virtio/virtio-win-0.1.285-1/virtio-win-0.1.285.iso"
   SSH_PORT: 2222
-  QCOW2_NAME: "windows-11-25h2.qcow2"
+  QCOW2_NAME: "windows-11-${{ inputs.version_tag }}.qcow2"
   # Windows auto-logon password from autounattend.xml (base64(UTF16LE("C@c#on160Password")))
   WIN_PASS: "C@c#on160"
 

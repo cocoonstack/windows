@@ -1,6 +1,6 @@
 # Windows VM Image
 
-Build automation for Windows 11 25H2 disk images targeting Cloud Hypervisor.
+Build automation for Windows 11 26H2 disk images targeting Cloud Hypervisor.
 The design goal is that a fresh Linux host can build and validate a Cocoon-compatible
 Windows image using this repository alone plus a Windows ISO download URL.
 
@@ -33,24 +33,26 @@ An image produced from this repo is only considered valid for Cocoon if all of t
 Built images are published as OCI artifacts to GHCR:
 
 ```
-ghcr.io/cocoonstack/windows/win11:25h2              # moving alias, latest good build
-ghcr.io/cocoonstack/windows/win11:25h2-<YYYYMMDD>   # dated immutable tag
+ghcr.io/cocoonstack/windows/win11:26h2              # moving alias, latest good build
+ghcr.io/cocoonstack/windows/win11:26h2-<YYYYMMDD>   # dated immutable tag
 ```
+
+`win11:25h2` is the previous release. Its `CocoonNicAutoHeal` task cycles all NICs as one batch, which leaves NICs in Code 10 on Cloud Hypervisor; use `26h2`.
 
 ### 1. Pull
 
 ```bash
 # Requires oras CLI -- https://oras.land
-oras pull ghcr.io/cocoonstack/windows/win11:25h2
+oras pull ghcr.io/cocoonstack/windows/win11:26h2
 ```
 
 This drops the split parts and `SHA256SUMS` into the current directory:
 
 ```
-windows-11-25h2.qcow2.00.qcow2.part    1.9G
-windows-11-25h2.qcow2.01.qcow2.part    1.9G
+windows-11-26h2.qcow2.00.qcow2.part    1.9G
+windows-11-26h2.qcow2.01.qcow2.part    1.9G
 ...
-windows-11-25h2.qcow2.07.qcow2.part    ~200M
+windows-11-26h2.qcow2.07.qcow2.part    ~200M
 SHA256SUMS
 ```
 
@@ -59,9 +61,9 @@ SHA256SUMS
 The qcow2 is split into ~1.9 GiB parts so every blob stays under the GHCR per-layer limit. `split` produces chunks in lexicographic order, so a plain `cat` with a glob gives you the original file back byte-for-byte:
 
 ```bash
-cat windows-11-25h2.qcow2.*.qcow2.part > windows-11-25h2.qcow2
+cat windows-11-26h2.qcow2.*.qcow2.part > windows-11-26h2.qcow2
 sha256sum -c SHA256SUMS
-rm windows-11-25h2.qcow2.*.qcow2.part   # optional, ~14 GiB of duplicate data
+rm windows-11-26h2.qcow2.*.qcow2.part   # optional, ~14 GiB of duplicate data
 ```
 
 The OCI manifest also carries the reassemble command in the `cocoonstack.windows.reassemble` annotation so any tool inspecting the artifact can discover it.
@@ -69,13 +71,13 @@ The OCI manifest also carries the reassemble command in the `cocoonstack.windows
 ### 3. Boot it on Cloud Hypervisor
 
 ```bash
-qemu-img info windows-11-25h2.qcow2   # sanity check
+qemu-img info windows-11-26h2.qcow2   # sanity check
 
 # Install the patched fork binaries first (see "Version requirements" below).
 cloud-hypervisor \
   --api-socket /tmp/ch.sock \
   --firmware /usr/local/share/cloud-hypervisor/CLOUDHV.fd \
-  --disk path=windows-11-25h2.qcow2,image_type=qcow2,backing_files=on \
+  --disk path=windows-11-26h2.qcow2,image_type=qcow2,backing_files=on \
   --cpus boot=4,kvm_hyperv=on \
   --memory size=4G \
   --net tap=<tapname>,mac=52:54:00:xx:xx:xx \
@@ -172,12 +174,12 @@ curl -fsSL -o /usr/local/share/cloud-hypervisor/CLOUDHV.fd \
 ### Building via GitHub Actions
 
 ```bash
-gh workflow run build.yml --repo cocoonstack/windows -f image_name=win11 -f version_tag=25h2
+gh workflow run build.yml --repo cocoonstack/windows -f image_name=win11 -f version_tag=26h2
 ```
 
 Requires one repository secret:
 
-- `WINDOWS_ISO_URL` — signed download URL for the Windows 11 25H2 ISO. Microsoft licensing prohibits bundling the ISO in the repo or any artifact, so fetch it at build time.
+- `WINDOWS_ISO_URL` — signed download URL for the Windows 11 26H2 ISO. Microsoft licensing prohibits bundling the ISO in the repo or any artifact, so fetch it at build time.
 
 The workflow asks for `image_name`, `version_tag`, and `disk_size`; it uses the
 script defaults for guest CPU and memory because those overrides are not exposed
@@ -232,7 +234,7 @@ sudo apt-get install -y \
   imagemagick dnsmasq socat freerdp2-x11
 ```
 
-Plus a Windows 11 25H2 ISO and [virtio-win-0.1.285.iso](https://fedorapeople.org/groups/virt/virtio-win/direct-downloads/archive-virtio/virtio-win-0.1.285-1/).
+Plus a Windows 11 26H2 ISO and [virtio-win-0.1.285.iso](https://fedorapeople.org/groups/virt/virtio-win/direct-downloads/archive-virtio/virtio-win-0.1.285-1/).
 
 #### Quirks worth knowing upfront
 
@@ -277,7 +279,7 @@ xorriso -as mkisofs -iso-level 3 -J -joliet-long -R \
 rm -rf iso_src
 
 # 2. Disk image
-qemu-img create -f qcow2 windows-11-25h2.qcow2 40G
+qemu-img create -f qcow2 windows-11-26h2.qcow2 40G
 
 # 3. Writable OVMF vars
 cp /usr/share/OVMF/OVMF_VARS_4M.fd OVMF_VARS.fd
@@ -300,7 +302,7 @@ qemu-system-x86_64 \
   -device ide-cd,drive=cd0,bus=ide.0 \
   -drive id=cd1,if=none,file=virtio-win-0.1.285.iso,media=cdrom,readonly=on \
   -device ide-cd,drive=cd1,bus=ide.1 \
-  -drive if=none,id=root,file=windows-11-25h2.qcow2,format=qcow2 \
+  -drive if=none,id=root,file=windows-11-26h2.qcow2,format=qcow2 \
   -device virtio-blk-pci,drive=root,disable-legacy=on \
   -device virtio-net-pci,netdev=mynet0,disable-legacy=on \
   -netdev user,id=mynet0,hostfwd=tcp::2222-:22 \
@@ -332,7 +334,7 @@ Setup runs completely unattended from here on: no key spray, no picker click, no
 LAST=0; STALL=0
 while :; do
   sleep 60
-  DISK=$(du -k windows-11-25h2.qcow2 | cut -f1)
+  DISK=$(du -k windows-11-26h2.qcow2 | cut -f1)
   if sshpass -p 'C@c#on160' ssh -o StrictHostKeyChecking=no \
       -o UserKnownHostsFile=/dev/null -p 2222 cocoon@localhost \
       'if exist C:\install.success echo READY' 2>/dev/null | grep -q READY; then
@@ -353,7 +355,7 @@ s.sendall(b'{\"execute\":\"system_reset\"}\n'); time.sleep(0.3)"
     STALL=0
   fi
   LAST=$DISK
-  echo "$(date) disk=$(du -sh windows-11-25h2.qcow2 | cut -f1) stall=${STALL}s"
+  echo "$(date) disk=$(du -sh windows-11-26h2.qcow2 | cut -f1) stall=${STALL}s"
 done
 
 # Upload and run verify / remediate
@@ -374,8 +376,8 @@ sshpass -p 'C@c#on160' ssh $SSH_OPTS -p 2222 cocoon@localhost \
 # Shut down and compress
 sshpass -p 'C@c#on160' ssh $SSH_OPTS -p 2222 cocoon@localhost 'shutdown /s /t 10'
 # wait for QEMU to exit
-qemu-img convert -O qcow2 -c windows-11-25h2.qcow2 windows-11-25h2.qcow2.tmp
-mv windows-11-25h2.qcow2.tmp windows-11-25h2.qcow2
+qemu-img convert -O qcow2 -c windows-11-26h2.qcow2 windows-11-26h2.qcow2.tmp
+mv windows-11-26h2.qcow2.tmp windows-11-26h2.qcow2
 ```
 
 Typical sizes: ~17 GiB uncompressed → ~14 GiB after `qemu-img convert -c`.
